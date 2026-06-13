@@ -263,15 +263,6 @@
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
-.url-input-section {
-  display: flex;
-  gap: 8px;
-}
-
-.url-input-section .form-input {
-  flex: 1;
-}
-
 .pagination-container {
   display: flex;
   align-items: center;
