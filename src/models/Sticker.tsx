@@ -11,9 +11,16 @@ export class Sticker {
     rotation = 0;
     opacity = 1;
 
+    constructor() {
+        this.id = this.generateId();
+    }
+
+    generateId() {
+        return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${Math.floor(Math.random() * 10000)}`;
+    }
+
     clone() {
         const st = new Sticker();
-        st.id = this.id;
         st.url = this.url;
         st.name = this.name;
         st.category = this.category;

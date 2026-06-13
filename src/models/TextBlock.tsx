@@ -21,10 +21,16 @@ export class TextBlock {
     gradientStartColor = '#FFFFFF';
     gradientEndColor = '#000000';
 
+    constructor() {
+        this.id = this.generateId();
+    }
+
+    generateId() {
+        return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${Math.floor(Math.random() * 10000)}`;
+    }
 
     clone() {
         const tb = new TextBlock();
-        tb.id = this.id;
         tb.text = this.text;
         tb.x = this.x;
         tb.y = this.y;

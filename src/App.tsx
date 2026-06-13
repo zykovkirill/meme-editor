@@ -8,8 +8,8 @@ import { Sticker } from './models/Sticker';
 
 const MemeEditor = () => {
   // Состояния
-  const canvasRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
@@ -85,7 +85,10 @@ const MemeEditor = () => {
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    
+    if (!ctx) {
+      return;
+    }
+
     // Загрузка фонового изображения
     const bgImage = await loadImageWithCache(selectedTemplate);
     
@@ -190,6 +193,7 @@ const MemeEditor = () => {
         ctx.restore();
       }
     }
+
   }, [selectedTemplate, memeElements, imageFilters, zoomLevel]);
 
   // Загрузка изображения с кэшем
@@ -584,6 +588,9 @@ const MemeEditor = () => {
 
   // Drag and drop
   const startDrag = async (e) => {
+    if (!canvasRef.current) {
+      return;
+    }
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     const clientY = e.clientY ?? e.touches?.[0]?.clientY;
@@ -592,7 +599,6 @@ const MemeEditor = () => {
     const y = (clientY - rect.top) / rect.height;
     
     const hitIndex = await hitTest(clientX, clientY);
-    
     if (hitIndex >= 0) {
       saveToHistory();
       setIsDragging(true);
@@ -604,7 +610,7 @@ const MemeEditor = () => {
   };
 
   const dragText = async (e) => {
-    if (!isDragging || !draggingElement) return;
+    if (!isDragging || !draggingElement || !canvasRef.current) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
@@ -635,6 +641,7 @@ const MemeEditor = () => {
   };
 
   const hitTest = (clientX, clientY) => {
+    if(!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / rect.width;
     const scaleY = canvasRef.current.height / rect.height;
@@ -703,7 +710,7 @@ const MemeEditor = () => {
 
   // Скачивание
   const downloadMeme = () => {
-    if (!selectedTemplate) return;
+    if (!selectedTemplate || !canvasRef.current) return;
     const link = document.createElement('a');
     link.download = `meme_${Date.now()}.jpg`;
     link.href = canvasRef.current.toDataURL('image/jpeg', 0.95);
