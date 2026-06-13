@@ -29,6 +29,13 @@ export class TextBlock {
         return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${Math.floor(Math.random() * 10000)}`;
     }
 
+    updatePosition(x: number, y: number): TextBlock {
+        const cloned = this.clone();
+        cloned.x = x;
+        cloned.y = y;
+        return cloned;
+    }
+
     clone() {
         const tb = new TextBlock();
         tb.text = this.text;

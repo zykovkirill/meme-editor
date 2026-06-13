@@ -1,8 +1,10 @@
-export class HistoryState {
-    elements = [];
-    filters = null;
+import type { ImageFilters } from "./ImageFilters";
 
-    constructor(elements, filters) {
+export class HistoryState {
+    elements: any[] = [];
+    filters: ImageFilters;
+
+    constructor(elements: any[], filters: ImageFilters) {
         this.elements = elements.map(el => el.clone());
         this.filters = filters.clone();
     }

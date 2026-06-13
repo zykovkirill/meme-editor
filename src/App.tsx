@@ -10,17 +10,22 @@ const MemeEditor = () => {
   // Состояния
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const draggingRef = useRef({
+    isDragging: false,
+    elementId: null,
+    startX: 0,
+    startY: 0,
+    elementStartX: 0,
+    elementStartY: 0,
+    tempX: 0,
+    tempY: 0
+  });
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
-  const [isDragging, setIsDragging] = useState(false);
-  const [draggingElement, setDraggingElement] = useState(null);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [dragTextStart, setDragTextStart] = useState({ x: 0, y: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
-  const [undoStack, setUndoStack] = useState([]);
-  const [redoStack, setRedoStack] = useState([]);
+  const [undoStack, setUndoStack] = useState<HistoryState[]>([]);
+  const [redoStack, setRedoStack] = useState<HistoryState[]>([]);
   const [showGrid, setShowGrid] = useState(false);
   const [sectionExpanded, setSectionExpanded] = useState(true);
   const [selectedStickerCategory, setSelectedStickerCategory] = useState('all');
@@ -30,10 +35,12 @@ const MemeEditor = () => {
     new TextBlock()
   ]);
   const [imageFilters, setImageFilters] = useState(new ImageFilters());
-  const [allStickers, setAllStickers] = useState([]);
-  
+  const [allStickers, setAllStickers] = useState<Sticker[]>([]);
+  const memeElementsRef = useRef(memeElements);
   const pageSize = 10;
-
+  useEffect(() => {
+    memeElementsRef.current = memeElements;
+  }, [memeElements]);
   // Вычисляемые значения
   const currentBlock = memeElements[activeBlockIndex];
   
@@ -79,122 +86,239 @@ const MemeEditor = () => {
     await redrawMeme();
   }, [redoStack, saveToHistory]);
 
+   const redrawDuringDrag = useCallback(async (draggedElementId, newX, newY) => {
+    if (!selectedTemplate || !canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    try {
+      // Загрузка фонового изображения из кэша
+      const bgImage = await loadImageWithCache(selectedTemplate);
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Применение фильтров
+      let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
+      filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
+      if (imageFilters.grayscale) filterString += ' grayscale(100%)';
+      if (imageFilters.sepia) filterString += ' sepia(100%)';
+      if (imageFilters.invert) filterString += ' invert(100%)';
+      
+      ctx.filter = filterString;
+      
+      const scaledWidth = canvas.width * zoomLevel;
+      const scaledHeight = canvas.height * zoomLevel;
+      const x = (canvas.width - scaledWidth) / 2;
+      const y = (canvas.height - scaledHeight) / 2;
+      
+      ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
+      ctx.filter = 'none';
+      
+      // Получаем актуальные элементы из ref
+      const currentElements = memeElementsRef.current;
+      
+      // Загружаем все изображения стикеров
+      const stickerImages = new Map();
+      for (const element of currentElements) {
+        if (element.elementType === 'Sticker') {
+          const img = await loadImageWithCache(element.url);
+          stickerImages.set(element.id, img);
+        }
+      }
+      
+      // Отрисовка всех элементов
+      for (const element of currentElements) {
+        let posX, posY;
+        
+        // Для перетаскиваемого элемента используем новые координаты
+        if (element.id === draggedElementId && draggingRef.current.isDragging) {
+          posX = x + scaledWidth * newX;
+          posY = y + scaledHeight * newY;
+        } else {
+          posX = x + scaledWidth * element.x;
+          posY = y + scaledHeight * element.y;
+        }
+        
+        if (element.elementType === 'Sticker') {
+          const stickerImg = stickerImages.get(element.id);
+          if (!stickerImg) continue;
+          
+          ctx.save();
+          ctx.translate(posX, posY);
+          ctx.rotate(element.rotation * Math.PI / 180);
+          ctx.globalAlpha = element.opacity;
+          
+          const stickerWidth = element.width;
+          const stickerHeight = element.height;
+          ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
+          ctx.restore();
+        } else if (element.elementType === 'Text') {
+          ctx.save();
+          ctx.translate(posX, posY);
+          ctx.rotate(element.rotation * Math.PI / 180);
+          ctx.textAlign = element.textAlign;
+          
+          const fontWeight = element.fontWeight;
+          const fontStyle = element.fontStyle;
+          const fontFamily = element.fontFamily;
+          ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3;
+          
+          // Тень
+          if (element.showShadow) {
+            ctx.fillStyle = element.shadowColor;
+            ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
+          }
+          
+          // Обводка
+          ctx.strokeStyle = element.strokeColor;
+          ctx.strokeText(element.text, 0, 0);
+          
+          // Заливка
+          if (element.useGradient) {
+            const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
+            gradient.addColorStop(0, element.gradientStartColor);
+            gradient.addColorStop(1, element.gradientEndColor);
+            ctx.fillStyle = gradient;
+          } else {
+            ctx.fillStyle = element.color;
+          }
+          
+          ctx.fillText(element.text, 0, 0);
+          
+          // Подчеркивание
+          if (element.textDecoration === 'underline') {
+            const metrics = ctx.measureText(element.text);
+            const textWidth = metrics.width;
+            const underlineY = element.fontSize / 2 + 3;
+            
+            ctx.beginPath();
+            ctx.strokeStyle = element.color;
+            ctx.lineWidth = 2;
+            ctx.moveTo(-textWidth / 2, underlineY);
+            ctx.lineTo(textWidth / 2, underlineY);
+            ctx.stroke();
+          }
+          
+          ctx.restore();
+        }
+      }
+    } catch (error) {
+      console.error('Error during drag redraw:', error);
+    }
+  }, [selectedTemplate, imageFilters, zoomLevel]);
+
   // Функции отрисовки
   const redrawMeme = useCallback(async () => {
     if (!selectedTemplate || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return;
-    }
+    if (!ctx) return;
 
-    // Загрузка фонового изображения
-    const bgImage = await loadImageWithCache(selectedTemplate);
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Применение фильтров
-    let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
-    filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
-    if (imageFilters.grayscale) filterString += ' grayscale(100%)';
-    if (imageFilters.sepia) filterString += ' sepia(100%)';
-    if (imageFilters.invert) filterString += ' invert(100%)';
-    
-    ctx.filter = filterString;
-    
-    const scaledWidth = canvas.width * zoomLevel;
-    const scaledHeight = canvas.height * zoomLevel;
-    const x = (canvas.width - scaledWidth) / 2;
-    const y = (canvas.height - scaledHeight) / 2;
-    
-    ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
-    ctx.filter = 'none';
-    
-    // Загрузка стикеров
-    const stickerImages = new Map();
-    for (const element of memeElements) {
-      if (element.elementType === 'Sticker') {
-        const img = await loadImageWithCache(element.url);
-        stickerImages.set(element.id, img);
+    try {
+      const bgImage = await loadImageWithCache(selectedTemplate);
+      
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
+      filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
+      if (imageFilters.grayscale) filterString += ' grayscale(100%)';
+      if (imageFilters.sepia) filterString += ' sepia(100%)';
+      if (imageFilters.invert) filterString += ' invert(100%)';
+      
+      ctx.filter = filterString;
+      
+      const scaledWidth = canvas.width * zoomLevel;
+      const scaledHeight = canvas.height * zoomLevel;
+      const x = (canvas.width - scaledWidth) / 2;
+      const y = (canvas.height - scaledHeight) / 2;
+      
+      ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
+      ctx.filter = 'none';
+      
+      const currentElements = memeElementsRef.current;
+      
+      const stickerImages = new Map();
+      for (const element of currentElements) {
+        if (element.elementType === 'Sticker') {
+          const img = await loadImageWithCache(element.url);
+          stickerImages.set(element.id, img);
+        }
       }
-    }
-    
-    // Отрисовка элементов
-    for (const element of memeElements) {
-      if (element.elementType === 'Sticker') {
-        const stickerImg = stickerImages.get(element.id);
-        if (!stickerImg) continue;
-        
+      
+      for (const element of currentElements) {
         const posX = x + scaledWidth * element.x;
         const posY = y + scaledHeight * element.y;
         
-        ctx.save();
-        ctx.translate(posX, posY);
-        ctx.rotate(element.rotation * Math.PI / 180);
-        ctx.globalAlpha = element.opacity;
-        
-        const stickerWidth = element.width;
-        const stickerHeight = element.height;
-        ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
-        ctx.restore();
-      } else if (element.elementType === 'Text') {
-        const posX = x + scaledWidth * element.x;
-        const posY = y + scaledHeight * element.y;
-        
-        ctx.save();
-        ctx.translate(posX, posY);
-        ctx.rotate(element.rotation * Math.PI / 180);
-        ctx.textAlign = element.textAlign;
-        
-        const fontWeight = element.fontWeight;
-        const fontStyle = element.fontStyle;
-        const fontFamily = element.fontFamily;
-        ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
-        ctx.textBaseline = 'middle';
-        ctx.lineWidth = 3;
-        
-        // Тень
-        if (element.showShadow) {
-          ctx.fillStyle = element.shadowColor;
-          ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
-        }
-        
-        // Обводка
-        ctx.strokeStyle = element.strokeColor;
-        ctx.strokeText(element.text, 0, 0);
-        
-        // Заливка
-        if (element.useGradient) {
-          const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
-          gradient.addColorStop(0, element.gradientStartColor);
-          gradient.addColorStop(1, element.gradientEndColor);
-          ctx.fillStyle = gradient;
-        } else {
-          ctx.fillStyle = element.color;
-        }
-        
-        ctx.fillText(element.text, 0, 0);
-        
-        // Подчеркивание
-        if (element.textDecoration === 'underline') {
-          const metrics = ctx.measureText(element.text);
-          const textWidth = metrics.width;
-          const underlineY = element.fontSize / 2 + 3;
+        if (element.elementType === 'Sticker') {
+          const stickerImg = stickerImages.get(element.id);
+          if (!stickerImg) continue;
           
-          ctx.beginPath();
-          ctx.strokeStyle = element.color;
-          ctx.lineWidth = 2;
-          ctx.moveTo(-textWidth / 2, underlineY);
-          ctx.lineTo(textWidth / 2, underlineY);
-          ctx.stroke();
+          ctx.save();
+          ctx.translate(posX, posY);
+          ctx.rotate(element.rotation * Math.PI / 180);
+          ctx.globalAlpha = element.opacity;
+          
+          const stickerWidth = element.width;
+          const stickerHeight = element.height;
+          ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
+          ctx.restore();
+        } else if (element.elementType === 'Text') {
+          ctx.save();
+          ctx.translate(posX, posY);
+          ctx.rotate(element.rotation * Math.PI / 180);
+          ctx.textAlign = element.textAlign;
+          
+          const fontWeight = element.fontWeight;
+          const fontStyle = element.fontStyle;
+          const fontFamily = element.fontFamily;
+          ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
+          ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3;
+          
+          if (element.showShadow) {
+            ctx.fillStyle = element.shadowColor;
+            ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
+          }
+          
+          ctx.strokeStyle = element.strokeColor;
+          ctx.strokeText(element.text, 0, 0);
+          
+          if (element.useGradient) {
+            const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
+            gradient.addColorStop(0, element.gradientStartColor);
+            gradient.addColorStop(1, element.gradientEndColor);
+            ctx.fillStyle = gradient;
+          } else {
+            ctx.fillStyle = element.color;
+          }
+          
+          ctx.fillText(element.text, 0, 0);
+          
+          if (element.textDecoration === 'underline') {
+            const metrics = ctx.measureText(element.text);
+            const textWidth = metrics.width;
+            const underlineY = element.fontSize / 2 + 3;
+            
+            ctx.beginPath();
+            ctx.strokeStyle = element.color;
+            ctx.lineWidth = 2;
+            ctx.moveTo(-textWidth / 2, underlineY);
+            ctx.lineTo(textWidth / 2, underlineY);
+            ctx.stroke();
+          }
+          
+          ctx.restore();
         }
-        
-        ctx.restore();
       }
+    } catch (error) {
+      console.error('Error in redrawMeme:', error);
     }
-
-  }, [selectedTemplate, memeElements, imageFilters, zoomLevel]);
+  }, [selectedTemplate, imageFilters, zoomLevel]);
 
   // Загрузка изображения с кэшем
   const imageCache = new Map();
@@ -312,7 +436,7 @@ const MemeEditor = () => {
     
     setIsLoading(true);
     const reader = new FileReader();
-    reader.onload = async (event) => {
+    reader.onload = async (event: any) => {
       saveToHistory();
       setSelectedTemplate(event.target.result);
       await redrawMeme();
@@ -333,7 +457,7 @@ const MemeEditor = () => {
   };
 
   // Функции изменения свойств
-  const changeText = async (e) => {
+  const changeText = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -342,7 +466,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeFontFamily = async (e) => {
+  const changeFontFamily = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -381,7 +505,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeColor = async (e) => {
+  const changeColor = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -390,7 +514,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeStrokeColor = async (e) => {
+  const changeStrokeColor = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -399,7 +523,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeFontSize = async (e) => {
+  const changeFontSize = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -408,7 +532,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeRotation = async (e) => {
+  const changeRotation = async (e: any) => {
     if (!currentBlock) return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -417,7 +541,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeStickerSize = async (e) => {
+  const changeStickerSize = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Sticker') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -429,7 +553,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeStickerOpacity = async (e) => {
+  const changeStickerOpacity = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Sticker') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -438,7 +562,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const toggleShowShadow = async (e) => {
+  const toggleShowShadow = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -447,7 +571,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeShadowColor = async (e) => {
+  const changeShadowColor = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -456,7 +580,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeShadowOffset = async (e) => {
+  const changeShadowOffset = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -465,7 +589,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const toggleUseGradient = async (e) => {
+  const toggleUseGradient = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -474,7 +598,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeGradientStartColor = async (e) => {
+  const changeGradientStartColor = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -483,7 +607,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeGradientEndColor = async (e) => {
+  const changeGradientEndColor = async (e: any) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
@@ -503,7 +627,7 @@ const MemeEditor = () => {
     await redrawMeme();
 };
 
-  const changeBrightness = async (e) => {
+  const changeBrightness = async (e: any) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
@@ -513,7 +637,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeContrast = async (e) => {
+  const changeContrast = async (e: any) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
@@ -523,7 +647,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeSaturate = async (e) => {
+  const changeSaturate = async (e: any) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
@@ -533,7 +657,7 @@ const MemeEditor = () => {
     await redrawMeme();
   };
 
-  const changeBlur = async (e) => {
+  const changeBlur = async (e: any) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
@@ -586,11 +710,12 @@ const MemeEditor = () => {
     redrawMeme();
   };
 
-  // Drag and drop
-  const startDrag = async (e) => {
-    if (!canvasRef.current) {
-      return;
-    }
+  // Оптимизированный startDrag
+   const startDrag = useCallback(async (e) => {
+    e.preventDefault();
+    
+    if (!canvasRef.current) return;
+    
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     const clientY = e.clientY ?? e.touches?.[0]?.clientY;
@@ -600,17 +725,32 @@ const MemeEditor = () => {
     
     const hitIndex = await hitTest(clientX, clientY);
     if (hitIndex >= 0) {
-      saveToHistory();
-      setIsDragging(true);
-      setDraggingElement(memeElements[hitIndex]);
+      const element = memeElementsRef.current[hitIndex];
+      
+      // Сохраняем данные перетаскивания
+      draggingRef.current = {
+        isDragging: true,
+        elementId: element.id,
+        startX: x,
+        startY: y,
+        elementStartX: element.x,
+        elementStartY: element.y,
+        tempX: element.x,
+        tempY: element.y
+      };
+      
       setActiveBlockIndex(hitIndex);
-      setDragStart({ x, y });
-      setDragTextStart({ x: memeElements[hitIndex].x, y: memeElements[hitIndex].y });
+      
+      // Сохраняем в историю перед началом перетаскивания
+      saveToHistory();
     }
-  };
+  }, [saveToHistory]);
 
-  const dragText = async (e) => {
-    if (!isDragging || !draggingElement || !canvasRef.current) return;
+  // Оптимизированный dragText - используем requestAnimationFrame для плавности
+  const dragText = useCallback((e: any) => {
+    if (!draggingRef.current.isDragging || !canvasRef.current) return;
+    
+    e.preventDefault();
     
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
@@ -619,52 +759,127 @@ const MemeEditor = () => {
     const newX = (clientX - rect.left) / rect.width;
     const newY = (clientY - rect.top) / rect.height;
     
-    const newElementX = dragTextStart.x + (newX - dragStart.x);
-    const newElementY = dragTextStart.y + (newY - dragStart.y);
+    const deltaX = newX - draggingRef.current.startX;
+    const deltaY = newY - draggingRef.current.startY;
     
-    const clampedX = Math.max(0.05, Math.min(0.95, newElementX));
-    const clampedY = Math.max(0.05, Math.min(0.95, newElementY));
+    let newElementX = draggingRef.current.elementStartX + deltaX;
+    let newElementY = draggingRef.current.elementStartY + deltaY;
     
-    const newElements = [...memeElements];
-    const index = newElements.findIndex(el => el.id === draggingElement.id);
-    if (index !== -1) {
-      newElements[index].x = clampedX;
-      newElements[index].y = clampedY;
-      setMemeElements(newElements);
-      await redrawMeme();
+    // Клэмпинг
+    newElementX = Math.max(0.05, Math.min(0.95, newElementX));
+    newElementY = Math.max(0.05, Math.min(0.95, newElementY));
+    
+    // Сохраняем временную позицию
+    draggingRef.current.tempX = newElementX;
+    draggingRef.current.tempY = newElementY;
+    
+    // Плавная отрисовка
+    if (window.dragFrame) {
+      cancelAnimationFrame(window.dragFrame);
     }
-  };
-
-  const endDrag = () => {
-    setIsDragging(false);
-    setDraggingElement(null);
-  };
-
-  const hitTest = (clientX, clientY) => {
-    if(!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const scaleX = canvasRef.current.width / rect.width;
-    const scaleY = canvasRef.current.height / rect.height;
     
-    const relX = (clientX - rect.left) * scaleX / canvasRef.current.width;
-    const relY = (clientY - rect.top) * scaleY / canvasRef.current.height;
+    window.dragFrame = requestAnimationFrame(() => {
+      redrawDuringDrag(draggingRef.current.elementId, newElementX, newElementY);
+    });
+  }, [redrawDuringDrag]);
+
+  const endDrag = useCallback(async () => {
+    if (!draggingRef.current.isDragging) return;
     
-    for (let i = memeElements.length - 1; i >= 0; i--) {
-      const element = memeElements[i];
-      const dx = Math.abs(relX - element.x);
-      const dy = Math.abs(relY - element.y);
+    if (window.dragFrame) {
+        cancelAnimationFrame(window.dragFrame);
+    }
+    
+    const finalX = draggingRef.current.tempX;
+    const finalY = draggingRef.current.tempY;
+    const elementId = draggingRef.current.elementId;
+    const oldX = draggingRef.current.elementStartX;
+    const oldY = draggingRef.current.elementStartY;
+    
+    if (elementId && (finalX !== oldX || finalY !== oldY)) {
+        saveToHistory();
+        
+        // Используем метод updatePosition для обновления координат
+        const newElements = memeElementsRef.current.map(el => {
+            if (el.id === elementId && typeof el.updatePosition === 'function') {
+                return el.updatePosition(finalX, finalY);
+            }
+            return el;
+        });
+        
+        setMemeElements(newElements);
+        await redrawMeme();
+    }
+    
+    draggingRef.current = {
+        isDragging: false,
+        elementId: null,
+        startX: 0,
+        startY: 0,
+        elementStartX: 0,
+        elementStartY: 0,
+        tempX: 0,
+        tempY: 0
+    };
+    
+}, [saveToHistory, redrawMeme]);
+
+   const hitTest = useCallback((clientX: number, clientY: number) => {
+    if (!canvasRef.current) return -1;
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    // Конвертируем экранные координаты в координаты канваса
+    const canvasX = (clientX - rect.left) * scaleX;
+    const canvasY = (clientY - rect.top) * scaleY;
+    
+    // Нормализованные координаты (0-1)
+    const relX = canvasX / canvas.width;
+    const relY = canvasY / canvas.height;
+    
+    // Используем актуальные элементы из ref
+    const currentElements = memeElementsRef.current;
+    
+    // Проверяем элементы с конца (верхние слои)
+    for (let i = currentElements.length - 1; i >= 0; i--) {
+      const element = currentElements[i];
       
       if (element.elementType === 'Text') {
-        if (dx < 0.15 && dy < 0.05) return i;
+        // Для текста используем bounding box
+        // Примерная ширина текста (можно улучшить, но для drag этого достаточно)
+        const approxWidth = 0.3; // 30% от ширины канваса
+        const approxHeight = 0.1; // 10% от высоты
+        
+        const left = element.x - approxWidth / 2;
+        const right = element.x + approxWidth / 2;
+        const top = element.y - approxHeight / 2;
+        const bottom = element.y + approxHeight / 2;
+        
+        if (relX >= left && relX <= right && relY >= top && relY <= bottom) {
+          return i;
+        }
       } else if (element.elementType === 'Sticker') {
-        const stickerWidth = element.width / canvasRef.current.width;
-        const stickerHeight = element.height / canvasRef.current.height;
-        if (dx < stickerWidth / 2 && dy < stickerHeight / 2) return i;
+        // Для стикера используем его реальные размеры
+        const stickerWidth = (element.width / canvas.width) * 1.2; // Увеличиваем область захвата на 20%
+        const stickerHeight = (element.height / canvas.height) * 1.2;
+        
+        const left = element.x - stickerWidth / 2;
+        const right = element.x + stickerWidth / 2;
+        const top = element.y - stickerHeight / 2;
+        const bottom = element.y + stickerHeight / 2;
+        
+        if (relX >= left && relX <= right && relY >= top && relY <= bottom) {
+          return i;
+        }
       }
     }
     
     return -1;
-  };
+  }, []);
+
 
   // Стикеры
   const loadStickers = () => {
@@ -716,6 +931,22 @@ const MemeEditor = () => {
     link.href = canvasRef.current.toDataURL('image/jpeg', 0.95);
     link.click();
   };
+
+  useEffect(() => {
+    const preventSelect = (e) => {
+      if (draggingRef.current.isDragging) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('selectstart', preventSelect);
+    document.addEventListener('dragstart', preventSelect);
+
+    return () => {
+      document.removeEventListener('selectstart', preventSelect);
+      document.removeEventListener('dragstart', preventSelect);
+    };
+  }, []);
 
   // Клавиатурные сокращения
   useEffect(() => {
