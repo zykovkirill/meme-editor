@@ -199,7 +199,7 @@ const MemeEditor = () => {
   // Загрузка изображения с кэшем
   const imageCache = new Map();
   
-  const loadImageWithCache = (url) => {
+  const loadImageWithCache = (url : string) : Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
       if (imageCache.has(url)) {
         const cachedImg = imageCache.get(url);
