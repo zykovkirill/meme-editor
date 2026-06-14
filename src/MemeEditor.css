@@ -397,3 +397,25 @@
 .sticker-categories {
   margin-bottom: 10px;
 }
+
+/* Стили для режима рисования */
+.control-button.active {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.control-button {
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.control-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* Индикатор режима рисования на канвасе */
+.meme-canvas.drawing-mode {
+  cursor: crosshair !important;
+}

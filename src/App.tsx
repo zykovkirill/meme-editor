@@ -20,12 +20,18 @@ const MemeEditor = () => {
     tempX: 0,
     tempY: 0
   });
+  const [drawingMode, setDrawingMode] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [brushSize, setBrushSize] = useState(5);
+  const [brushColor, setBrushColor] = useState('#000000');
+  const [drawingData, setDrawingData] = useState<{ x: number; y: number; size: number; color: string }[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [undoStack, setUndoStack] = useState<HistoryState[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryState[]>([]);
+  const [drawingLayer, setDrawingLayer] = useState('bottom'); // 'bottom' или 'top'
   const [showGrid, setShowGrid] = useState(false);
   const [sectionExpanded, setSectionExpanded] = useState(true);
   const [selectedStickerCategory, setSelectedStickerCategory] = useState('all');
@@ -36,10 +42,14 @@ const MemeEditor = () => {
   const [imageFilters, setImageFilters] = useState(new ImageFilters());
   const [allStickers, setAllStickers] = useState<Sticker[]>([]);
   const memeElementsRef = useRef(memeElements);
+  const drawingDataRef = useRef(drawingData);
   const pageSize = 12;
   useEffect(() => {
     memeElementsRef.current = memeElements;
   }, [memeElements]);
+    useEffect(() => {
+    drawingDataRef.current = drawingData;
+  }, [drawingData]);
   // Вычисляемые значения
   const currentBlock = memeElements[activeBlockIndex];
 
@@ -89,27 +99,28 @@ const MemeEditor = () => {
 
   // Функции истории
   const saveToHistory = useCallback(() => {
-    setUndoStack(prev => [...prev, new HistoryState(memeElements, imageFilters)]);
-    setRedoStack([]);
-  }, [memeElements, imageFilters]);
+  setUndoStack(prev => [...prev, new HistoryState(memeElements, imageFilters, drawingData, drawingLayer)]);
+  setRedoStack([]);
+}, [memeElements, imageFilters, drawingData, drawingLayer]);
 
   const undo = useCallback(async () => {
     if (undoStack.length === 0) return;
 
-    const current = new HistoryState(memeElements, imageFilters);
+    const current = new HistoryState(memeElements, imageFilters, drawingData);
     setRedoStack(prev => [...prev, current]);
 
     const previous = undoStack[undoStack.length - 1];
     setUndoStack(prev => prev.slice(0, -1));
     setMemeElements(previous.elements);
     setImageFilters(previous.filters);
+    setDrawingData(previous.drawingData || []);
 
     if (activeBlockIndex >= previous.elements.length) {
       setActiveBlockIndex(previous.elements.length - 1);
     }
 
     await redrawMeme();
-  }, [undoStack, memeElements, imageFilters, activeBlockIndex]);
+  }, [undoStack, memeElements, imageFilters, drawingData, activeBlockIndex]);
 
   const redo = useCallback(async () => {
     if (redoStack.length === 0) return;
@@ -118,233 +129,123 @@ const MemeEditor = () => {
     setRedoStack(prev => prev.slice(0, -1));
     setMemeElements(next.elements);
     setImageFilters(next.filters);
+    setDrawingData(next.drawingData || []);
 
     saveToHistory();
     await redrawMeme();
   }, [redoStack, saveToHistory]);
 
   const redrawDuringDrag = useCallback(async (draggedElementId: any, newX: number, newY: number) => {
-    if (!selectedTemplate || !canvasRef.current) return;
+  if (!selectedTemplate || !canvasRef.current) return;
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const canvas = canvasRef.current;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
 
-    try {
-      const bgImage = await loadImageWithCache(selectedTemplate);
+  try {
+    const bgImage = await loadImageWithCache(selectedTemplate);
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Применяем фильтры
-      let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
-      filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
-      if (imageFilters.grayscale) filterString += ' grayscale(100%)';
-      if (imageFilters.sepia) filterString += ' sepia(100%)';
-      if (imageFilters.invert) filterString += ' invert(100%)';
+    let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
+    filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
+    if (imageFilters.grayscale) filterString += ' grayscale(100%)';
+    if (imageFilters.sepia) filterString += ' sepia(100%)';
+    if (imageFilters.invert) filterString += ' invert(100%)';
 
-      ctx.filter = filterString;
+    ctx.filter = filterString;
 
-      // Получаем позицию изображения с текущим zoom
-      const imgPos = getImagePosition();
+    const imgPos = getImagePosition();
 
-      ctx.drawImage(bgImage, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
-      ctx.filter = 'none';
+    ctx.drawImage(bgImage, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+    ctx.filter = 'none';
 
-      const currentElements = memeElementsRef.current;
+    const currentElements = memeElementsRef.current;
 
-      // Загружаем стикеры
-      const stickerImages = new Map();
-      for (const element of currentElements) {
-        if (element.elementType === 'Sticker') {
-          const img = await loadImageWithCache(element.url);
-          stickerImages.set(element.id, img);
-        }
+    // Загружаем стикеры
+    const stickerImages = new Map();
+    for (const element of currentElements) {
+      if (element.elementType === 'Sticker') {
+        const img = await loadImageWithCache(element.url);
+        stickerImages.set(element.id, img);
       }
-
-      // Отрисовываем все элементы
-      for (const element of currentElements) {
-        let posX, posY;
-
-        if (element.id === draggedElementId && draggingRef.current.isDragging) {
-          posX = imgPos.x + imgPos.width * newX;
-          posY = imgPos.y + imgPos.height * newY;
-        } else {
-          posX = imgPos.x + imgPos.width * element.x;
-          posY = imgPos.y + imgPos.height * element.y;
-        }
-
-        if (element.elementType === 'Sticker') {
-          const stickerImg = stickerImages.get(element.id);
-          if (!stickerImg) continue;
-
-          ctx.save();
-          ctx.translate(posX, posY);
-          ctx.rotate(element.rotation * Math.PI / 180);
-          ctx.globalAlpha = element.opacity;
-
-          const stickerWidth = element.width;
-          const stickerHeight = element.height;
-          ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
-          ctx.restore();
-        } else if (element.elementType === 'Text') {
-          ctx.save();
-          ctx.translate(posX, posY);
-          ctx.rotate(element.rotation * Math.PI / 180);
-          ctx.textAlign = element.textAlign;
-
-          ctx.font = `${element.fontStyle} ${element.fontWeight} ${element.fontSize}px ${element.fontFamily}`;
-          ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3;
-
-          if (element.showShadow) {
-            ctx.fillStyle = element.shadowColor;
-            ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
-          }
-
-          ctx.strokeStyle = element.strokeColor;
-          ctx.strokeText(element.text, 0, 0);
-
-          if (element.useGradient) {
-            const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
-            gradient.addColorStop(0, element.gradientStartColor);
-            gradient.addColorStop(1, element.gradientEndColor);
-            ctx.fillStyle = gradient;
-          } else {
-            ctx.fillStyle = element.color;
-          }
-
-          ctx.fillText(element.text, 0, 0);
-
-          if (element.textDecoration === 'underline') {
-            const metrics = ctx.measureText(element.text);
-            const textWidth = metrics.width;
-            const underlineY = element.fontSize / 2 + 3;
-
-            ctx.beginPath();
-            ctx.strokeStyle = element.color;
-            ctx.lineWidth = 2;
-            ctx.moveTo(-textWidth / 2, underlineY);
-            ctx.lineTo(textWidth / 2, underlineY);
-            ctx.stroke();
-          }
-
-          ctx.restore();
-        }
-      }
-    } catch (error) {
-      console.error('Error during drag redraw:', error);
     }
-  }, [selectedTemplate, imageFilters, getImagePosition]);
 
+    // Рисуем в зависимости от выбранного слоя
+    if (drawingLayer === 'bottom') {
+      drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+      await drawElementsOnCanvas(
+        ctx, currentElements, stickerImages, 
+        imgPos.x, imgPos.y, imgPos.width, imgPos.height,
+        draggedElementId, newX, newY, true
+      );
+    } else {
+      await drawElementsOnCanvas(
+        ctx, currentElements, stickerImages, 
+        imgPos.x, imgPos.y, imgPos.width, imgPos.height,
+        draggedElementId, newX, newY, true
+      );
+      drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+    }
+    
+  } catch (error) {
+    console.error('Error during drag redraw:', error);
+  }
+}, [selectedTemplate, imageFilters, getImagePosition, drawingData, drawingLayer]);
 
   // Функции отрисовки
   const redrawMeme = useCallback(async () => {
-    if (!selectedTemplate || !canvasRef.current) return;
+  if (!selectedTemplate || !canvasRef.current) return;
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const canvas = canvasRef.current;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
 
-    try {
-      const bgImage = await loadImageWithCache(selectedTemplate);
+  try {
+    const bgImage = await loadImageWithCache(selectedTemplate);
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
-      filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
-      if (imageFilters.grayscale) filterString += ' grayscale(100%)';
-      if (imageFilters.sepia) filterString += ' sepia(100%)';
-      if (imageFilters.invert) filterString += ' invert(100%)';
+    let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
+    filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
+    if (imageFilters.grayscale) filterString += ' grayscale(100%)';
+    if (imageFilters.sepia) filterString += ' sepia(100%)';
+    if (imageFilters.invert) filterString += ' invert(100%)';
 
-      ctx.filter = filterString;
+    ctx.filter = filterString;
 
-      const scaledWidth = canvas.width * zoomLevel;
-      const scaledHeight = canvas.height * zoomLevel;
-      const x = (canvas.width - scaledWidth) / 2;
-      const y = (canvas.height - scaledHeight) / 2;
+    const scaledWidth = canvas.width * zoomLevel;
+    const scaledHeight = canvas.height * zoomLevel;
+    const x = (canvas.width - scaledWidth) / 2;
+    const y = (canvas.height - scaledHeight) / 2;
 
-      ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
-      ctx.filter = 'none';
+    ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
+    ctx.filter = 'none';
 
-      const currentElements = memeElementsRef.current;
+    const currentElements = memeElementsRef.current;
 
-      const stickerImages = new Map();
-      for (const element of currentElements) {
-        if (element.elementType === 'Sticker') {
-          const img = await loadImageWithCache(element.url);
-          stickerImages.set(element.id, img);
-        }
+    // Загружаем стикеры
+    const stickerImages = new Map();
+    for (const element of currentElements) {
+      if (element.elementType === 'Sticker') {
+        const img = await loadImageWithCache(element.url);
+        stickerImages.set(element.id, img);
       }
-
-      for (const element of currentElements) {
-        const posX = x + scaledWidth * element.x;
-        const posY = y + scaledHeight * element.y;
-
-        if (element.elementType === 'Sticker') {
-          const stickerImg = stickerImages.get(element.id);
-          if (!stickerImg) continue;
-
-          ctx.save();
-          ctx.translate(posX, posY);
-          ctx.rotate(element.rotation * Math.PI / 180);
-          ctx.globalAlpha = element.opacity;
-
-          const stickerWidth = element.width;
-          const stickerHeight = element.height;
-          ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
-          ctx.restore();
-        } else if (element.elementType === 'Text') {
-          ctx.save();
-          ctx.translate(posX, posY);
-          ctx.rotate(element.rotation * Math.PI / 180);
-          ctx.textAlign = element.textAlign;
-
-          const fontWeight = element.fontWeight;
-          const fontStyle = element.fontStyle;
-          const fontFamily = element.fontFamily;
-          ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
-          ctx.textBaseline = 'middle';
-          ctx.lineWidth = 3;
-
-          if (element.showShadow) {
-            ctx.fillStyle = element.shadowColor;
-            ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
-          }
-
-          ctx.strokeStyle = element.strokeColor;
-          ctx.strokeText(element.text, 0, 0);
-
-          if (element.useGradient) {
-            const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
-            gradient.addColorStop(0, element.gradientStartColor);
-            gradient.addColorStop(1, element.gradientEndColor);
-            ctx.fillStyle = gradient;
-          } else {
-            ctx.fillStyle = element.color;
-          }
-
-          ctx.fillText(element.text, 0, 0);
-
-          if (element.textDecoration === 'underline') {
-            const metrics = ctx.measureText(element.text);
-            const textWidth = metrics.width;
-            const underlineY = element.fontSize / 2 + 3;
-
-            ctx.beginPath();
-            ctx.strokeStyle = element.color;
-            ctx.lineWidth = 2;
-            ctx.moveTo(-textWidth / 2, underlineY);
-            ctx.lineTo(textWidth / 2, underlineY);
-            ctx.stroke();
-          }
-
-          ctx.restore();
-        }
-      }
-    } catch (error) {
-      console.error('Error in redrawMeme:', error);
     }
-  }, [selectedTemplate, imageFilters, zoomLevel]);
+
+    // Рисуем в зависимости от выбранного слоя
+    if (drawingLayer === 'bottom') {
+      drawDrawingOnCanvas(ctx, drawingData, x, y, scaledWidth, scaledHeight);
+      await drawElementsOnCanvas(ctx, currentElements, stickerImages, x, y, scaledWidth, scaledHeight);
+    } else {
+      await drawElementsOnCanvas(ctx, currentElements, stickerImages, x, y, scaledWidth, scaledHeight);
+      drawDrawingOnCanvas(ctx, drawingData, x, y, scaledWidth, scaledHeight);
+    }
+    
+  } catch (error) {
+    console.error('Error in redrawMeme:', error);
+  }
+}, [selectedTemplate, imageFilters, zoomLevel, drawingData, drawingLayer]);
 
   // Загрузка изображения с кэшем
   const imageCache = new Map();
@@ -372,13 +273,197 @@ const MemeEditor = () => {
     });
   };
 
+  const startDrawing = useCallback((e: any) => {
+  if (!drawingMode || !canvasRef.current || !selectedTemplate) return;
+  
+  e.preventDefault();
+  setIsDrawing(true);
+  
+  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+  const normalized = getNormalizedCoordinates(clientX, clientY);
+  if (normalized) {
+    setDrawingData(prev => [...prev, {
+      x: normalized.x,
+      y: normalized.y,
+      size: brushSize / 100,
+      color: brushColor
+    }]);
+  }
+}, [drawingMode, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor]);
+
+const drawDrawingOnCanvas = (
+  ctx: CanvasRenderingContext2D,
+  drawingData: any[],
+  x: number,
+  y: number,
+  scaledWidth: number,
+  scaledHeight: number
+) => {
+  if (drawingData.length === 0) return;
+  
+  ctx.save();
+  
+  for (let i = 0; i < drawingData.length - 1; i++) {
+    const point1 = drawingData[i];
+    const point2 = drawingData[i + 1];
+    
+    if (point1.color !== point2.color) continue;
+    
+    const posX1 = x + scaledWidth * point1.x;
+    const posY1 = y + scaledHeight * point1.y;
+    const posX2 = x + scaledWidth * point2.x;
+    const posY2 = y + scaledHeight * point2.y;
+    
+    const brushSizePx = point1.size * Math.min(scaledWidth, scaledHeight) / 10;
+    
+    ctx.beginPath();
+    ctx.moveTo(posX1, posY1);
+    ctx.lineTo(posX2, posY2);
+    ctx.strokeStyle = point1.color;
+    ctx.lineWidth = brushSizePx;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+  
+  ctx.restore();
+};
+
+const drawElementsOnCanvas = async (
+  ctx: CanvasRenderingContext2D,
+  elements: any[],
+  stickerImages: Map<string, HTMLImageElement>,
+  x: number,
+  y: number,
+  scaledWidth: number,
+  scaledHeight: number,
+  draggedElementId: string | null = null,
+  dragNewX: number | null = null,
+  dragNewY: number | null = null,
+  isDragging: boolean = false
+) => {
+  for (const element of elements) {
+    let posX, posY;
+
+    if (element.id === draggedElementId && isDragging && dragNewX !== null && dragNewY !== null) {
+      posX = x + scaledWidth * dragNewX;
+      posY = y + scaledHeight * dragNewY;
+    } else {
+      posX = x + scaledWidth * element.x;
+      posY = y + scaledHeight * element.y;
+    }
+
+    if (element.elementType === 'Sticker') {
+      const stickerImg = stickerImages.get(element.id);
+      if (!stickerImg) continue;
+
+      ctx.save();
+      ctx.translate(posX, posY);
+      ctx.rotate(element.rotation * Math.PI / 180);
+      ctx.globalAlpha = element.opacity;
+
+      const stickerWidth = element.width;
+      const stickerHeight = element.height;
+      ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
+      ctx.restore();
+    } else if (element.elementType === 'Text') {
+      ctx.save();
+      ctx.translate(posX, posY);
+      ctx.rotate(element.rotation * Math.PI / 180);
+      ctx.textAlign = element.textAlign;
+
+      const fontWeight = element.fontWeight;
+      const fontStyle = element.fontStyle;
+      const fontFamily = element.fontFamily;
+      ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+
+      if (element.showShadow) {
+        ctx.fillStyle = element.shadowColor;
+        ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
+      }
+
+      ctx.strokeStyle = element.strokeColor;
+      ctx.strokeText(element.text, 0, 0);
+
+      if (element.useGradient) {
+        const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
+        gradient.addColorStop(0, element.gradientStartColor);
+        gradient.addColorStop(1, element.gradientEndColor);
+        ctx.fillStyle = gradient;
+      } else {
+        ctx.fillStyle = element.color;
+      }
+
+      ctx.fillText(element.text, 0, 0);
+
+      if (element.textDecoration === 'underline') {
+        const metrics = ctx.measureText(element.text);
+        const textWidth = metrics.width;
+        const underlineY = element.fontSize / 2 + 3;
+
+        ctx.beginPath();
+        ctx.strokeStyle = element.color;
+        ctx.lineWidth = 2;
+        ctx.moveTo(-textWidth / 2, underlineY);
+        ctx.lineTo(textWidth / 2, underlineY);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+  }
+};
+
+const draw = useCallback((e: any) => {
+  if (!drawingMode || !isDrawing || !canvasRef.current || !selectedTemplate) return;
+  
+  e.preventDefault();
+  
+  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+  
+  const normalized = getNormalizedCoordinates(clientX, clientY);
+  if (normalized) {
+    setDrawingData(prev => [...prev, {
+      x: normalized.x,
+      y: normalized.y,
+      size: brushSize / 100,
+      color: brushColor
+    }]);
+    redrawMeme();
+  }
+}, [drawingMode, isDrawing, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor, redrawMeme]);
+
+  const stopDrawing = useCallback(() => {
+    if (isDrawing) {
+      saveToHistory();
+      setIsDrawing(false);
+    }
+  }, [isDrawing, saveToHistory]);
+
+  const clearDrawing = useCallback(async () => {
+    saveToHistory();
+    setDrawingData([]);
+    await redrawMeme();
+  }, [saveToHistory, redrawMeme]);
+
+  const toggleDrawingMode = () => {
+    setDrawingMode(!drawingMode);
+    if (!drawingMode) {
+      setIsDrawing(false);
+    }
+  };
+
   // Функции работы с элементами
   const addTextBlock = async () => {
     saveToHistory();
     setMemeElements(prev => [...prev, new TextBlock()]);
     setActiveBlockIndex(memeElements.length);
     await redrawMeme();
-  };
+  } ;
 
   const removeTextBlock = async () => {
     if (memeElements.length <= 1) return;
@@ -1008,18 +1093,18 @@ const MemeEditor = () => {
             ref={canvasRef}
             width="800"
             height="600"
-            className="meme-canvas"
-            onMouseDown={startDrag}
-            onMouseMove={dragElement}
-            onMouseUp={endDrag}
-            onMouseLeave={endDrag}
+            className={`meme-canvas ${drawingMode ? 'drawing-mode' : ''}`}
+            onMouseDown={drawingMode ? startDrawing : startDrag}
+            onMouseMove={drawingMode ? draw : dragElement}
+            onMouseUp={drawingMode ? stopDrawing : endDrag}
+            onMouseLeave={drawingMode ? stopDrawing : endDrag}
             onWheel={(e) => {
               if (e.deltaY < 0) zoomIn();
               else zoomOut();
             }}
-            onTouchStart={startDrag}
-            onTouchMove={dragElement}
-            onTouchEnd={endDrag}
+            onTouchStart={drawingMode ? startDrawing : startDrag}
+            onTouchMove={drawingMode ? draw : dragElement}
+            onTouchEnd={drawingMode ? stopDrawing : endDrag}
           />
 
           {showGrid && (
@@ -1225,6 +1310,97 @@ const MemeEditor = () => {
                 <input type="range" min="0" max="10" step="0.5" value={imageFilters.blur} onChange={changeBlur} />
               </div>
             </div>
+          </div>
+
+          {/* Инструменты рисования */}
+          <div className="control-section">
+            <h3 className="section-title">✏️ Рисование</h3>
+
+            <div className="control-group">
+              <button
+                className={`control-button ${drawingMode ? 'active' : ''}`}
+                onClick={toggleDrawingMode}
+                style={{ width: '100%', marginBottom: '10px' }}
+              >
+                {drawingMode ? '🔴 Режим рисования (Вкл)' : '⚫ Режим рисования (Выкл)'}
+              </button>
+            </div>
+
+            {drawingMode && (
+              <>
+                <div className="control-group">
+                  <label>🖌️ Размер кисти: {brushSize}px</label>
+                  <input
+                    type="range"
+                    className="form-range"
+                    min="2"
+                    max="50"
+                    step="1"
+                    value={brushSize}
+                    onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                  />
+                </div>
+
+                <div className="control-group">
+                  <label>🎨 Цвет кисти:</label>
+                  <input
+                    type="color"
+                    className="form-color"
+                    value={brushColor}
+                    onChange={(e) => setBrushColor(e.target.value)}
+                    style={{ width: '100%', marginTop: '5px' }}
+                  />
+                </div>
+                <div className="control-group">
+                  <label>📐 Слой рисунка:</label>
+                  <div className="text-blocks-controls" style={{ marginTop: '5px' }}>
+                    <button
+                      className={`control-button ${drawingLayer === 'bottom' ? 'active' : ''}`}
+                      onClick={() => {
+                        setDrawingLayer('bottom');
+                        saveToHistory();
+                        redrawMeme();
+                      }}
+                      style={{ flex: 1 }}
+                    >
+                      ⬇️ Под элементами
+                    </button>
+                    <button
+                      className={`control-button ${drawingLayer === 'top' ? 'active' : ''}`}
+                      onClick={() => {
+                        setDrawingLayer('top');
+                        saveToHistory();
+                        redrawMeme();
+                      }}
+                      style={{ flex: 1 }}
+                    >
+                      ⬆️ Поверх элементов
+                    </button>
+                  </div>
+                </div>
+
+                <div className="control-group">
+                  <button
+                    className="control-button"
+                    onClick={clearDrawing}
+                    style={{ width: '100%', background: '#e74c3c', color: 'white' }}
+                  >
+                    🗑️ Очистить рисунок
+                  </button>
+                </div>
+
+                <div className="drawing-preview" style={{
+                  marginTop: '10px',
+                  padding: '10px',
+                  background: '#f0f0f0',
+                  borderRadius: '5px',
+                  fontSize: '12px',
+                  textAlign: 'center'
+                }}>
+                  <small>💡 Совет: Зажмите левую кнопку мыши и водите по канвасу для рисования</small>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Стикеры */}
