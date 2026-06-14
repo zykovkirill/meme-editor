@@ -28,12 +28,13 @@ const MemeEditor = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('elements'); // 'elements', 'filters', 'draw', 'sticker
   const [zoomLevel, setZoomLevel] = useState(1);
   const [undoStack, setUndoStack] = useState<HistoryState[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryState[]>([]);
   const [drawingLayer, setDrawingLayer] = useState('bottom'); // 'bottom' или 'top'
   const [showGrid, setShowGrid] = useState(false);
-  const [sectionExpanded, setSectionExpanded] = useState(true);
   const [selectedStickerCategory, setSelectedStickerCategory] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [memeElements, setMemeElements] = useState<any[]>([
@@ -58,6 +59,10 @@ const MemeEditor = () => {
     : allStickers.filter(s => s.category === selectedStickerCategory);
 
   const totalPages = Math.ceil(filteredStickers.length / pageSize);
+
+  const toggleMobileMenu = () => {
+    setMobileMenuOpen(!mobileMenuOpen);
+  };
 
   const getImagePosition = useCallback(() => {
     if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
@@ -122,6 +127,28 @@ const MemeEditor = () => {
     await redrawMeme();
   }, [undoStack, memeElements, imageFilters, drawingData, activeBlockIndex]);
 
+  useEffect(() => {
+    applyCanvasFilters();
+  }, [imageFilters]);
+
+  const applyCanvasFilters = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    let filterString = '';
+
+    if (imageFilters.grayscale) filterString += 'grayscale(100%) ';
+    if (imageFilters.sepia) filterString += 'sepia(100%) ';
+    if (imageFilters.invert) filterString += 'invert(100%) ';
+
+    filterString += `brightness(${imageFilters.brightness}%) `;
+    filterString += `contrast(${imageFilters.contrast}%) `;
+    filterString += `saturate(${imageFilters.saturate}%) `;
+    filterString += `blur(${imageFilters.blur}px)`;
+
+    canvas.style.filter = filterString;
+  };
+
   const redo = useCallback(async () => {
     if (redoStack.length === 0) return;
 
@@ -146,14 +173,6 @@ const MemeEditor = () => {
     const bgImage = await loadImageWithCache(selectedTemplate);
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
-    filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
-    if (imageFilters.grayscale) filterString += ' grayscale(100%)';
-    if (imageFilters.sepia) filterString += ' sepia(100%)';
-    if (imageFilters.invert) filterString += ' invert(100%)';
-
-    ctx.filter = filterString;
 
     const imgPos = getImagePosition();
 
@@ -191,7 +210,7 @@ const MemeEditor = () => {
   } catch (error) {
     console.error('Error during drag redraw:', error);
   }
-}, [selectedTemplate, imageFilters, getImagePosition, drawingData, drawingLayer]);
+}, [selectedTemplate, getImagePosition, drawingData, drawingLayer]);
 
   // Функции отрисовки
   const redrawMeme = useCallback(async () => {
@@ -205,14 +224,6 @@ const MemeEditor = () => {
     const bgImage = await loadImageWithCache(selectedTemplate);
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    let filterString = `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) `;
-    filterString += `saturate(${imageFilters.saturate}%) blur(${imageFilters.blur}px)`;
-    if (imageFilters.grayscale) filterString += ' grayscale(100%)';
-    if (imageFilters.sepia) filterString += ' sepia(100%)';
-    if (imageFilters.invert) filterString += ' invert(100%)';
-
-    ctx.filter = filterString;
 
     const scaledWidth = canvas.width * zoomLevel;
     const scaledHeight = canvas.height * zoomLevel;
@@ -245,7 +256,7 @@ const MemeEditor = () => {
   } catch (error) {
     console.error('Error in redrawMeme:', error);
   }
-}, [selectedTemplate, imageFilters, zoomLevel, drawingData, drawingLayer]);
+}, [selectedTemplate, zoomLevel, drawingData, drawingLayer]);
 
   // Загрузка изображения с кэшем
   const imageCache = new Map();
@@ -1078,375 +1089,594 @@ const draw = useCallback((e: any) => {
     }
   }, [selectedTemplate, memeElements, imageFilters, zoomLevel, redrawMeme]);
 
-  const getBlockColor = () => {
-    if (currentBlock?.elementType === 'Text') return '#667eea';
-    if (currentBlock?.elementType === 'Sticker') return '#f39c12';
+  const getBlockColor = (el: any) => {
+    if (el?.elementType === 'Text') return '#667eea';
+    if (el?.elementType === 'Sticker') return '#f39c12';
     return '#95a5a6';
   };
+  
+
 
   return (
     <div className="meme-editor">
-      <div className="editor-container">
-        {/* Канвас */}
-        <div className="meme-preview">
-          <canvas
-            ref={canvasRef}
-            width="800"
-            height="600"
-            className={`meme-canvas ${drawingMode ? 'drawing-mode' : ''}`}
-            onMouseDown={drawingMode ? startDrawing : startDrag}
-            onMouseMove={drawingMode ? draw : dragElement}
-            onMouseUp={drawingMode ? stopDrawing : endDrag}
-            onMouseLeave={drawingMode ? stopDrawing : endDrag}
-            onWheel={(e) => {
-              if (e.deltaY < 0) zoomIn();
-              else zoomOut();
-            }}
-            onTouchStart={drawingMode ? startDrawing : startDrag}
-            onTouchMove={drawingMode ? draw : dragElement}
-            onTouchEnd={drawingMode ? stopDrawing : endDrag}
-          />
+      {/* Верхняя панель инструментов (для мобильных устройств) */}
+      <div className="mobile-toolbar">
+        <button className="mobile-tool-btn" onClick={toggleMobileMenu}>
+          ☰ Меню
+        </button>
+        <button className="mobile-tool-btn" onClick={downloadMeme}>
+          💾 Сохранить
+        </button>
+      </div>
 
-          {showGrid && (
-            <div className="grid-overlay">
-              {[0, 1, 2].map(i => (
-                <React.Fragment key={i}>
-                  <div className="grid-line vertical" style={{ left: `${(i + 1) * 25}%` }} />
-                  <div className="grid-line horizontal" style={{ top: `${(i + 1) * 25}%` }} />
-                </React.Fragment>
-              ))}
-            </div>
-          )}
+      <div className="editor-layout">
+        {/* Основная область с канвасом */}
+        <div className="canvas-area">
+          <div className="meme-preview">
+            <canvas
+              ref={canvasRef}
+              width={800}
+              height={600}
+              className={`meme-canvas ${drawingMode ? 'drawing-mode' : ''}`}
+              onMouseDown={drawingMode ? startDrawing : startDrag}
+              onMouseMove={drawingMode ? draw : dragElement}
+              onMouseUp={drawingMode ? stopDrawing : endDrag}
+              onMouseLeave={drawingMode ? stopDrawing : endDrag}
+              onTouchStart={drawingMode ? startDrawing : startDrag}
+              onTouchMove={drawingMode ? draw : dragElement}
+              onTouchEnd={drawingMode ? stopDrawing : endDrag}
+              onWheel={(e) => {
+                e.preventDefault();
+                if (e.deltaY < 0) zoomIn();
+                else zoomOut();
+              }}
+            />
 
-          {/* Панель инструментов на канвасе */}
-          <div className="canvas-tools">
-            <div className="tool-group">
-              <button className="tool-btn" onClick={zoomIn} title="Приблизить (Ctrl++)">➕</button>
-              <button className="tool-btn" onClick={zoomOut} title="Отдалить (Ctrl+-)">➖</button>
-              <button className="tool-btn" onClick={resetZoom} title="Сбросить масштаб (Ctrl+0)">🔄</button>
+            {/* Плавающие инструменты */}
+            <div className="floating-tools">
+              <div className="tool-group">
+                <button className="tool-btn" onClick={zoomIn} title="Приблизить (Ctrl+Plus)">
+                  <ZoomInIcon />
+                </button>
+                <button className="tool-btn" onClick={zoomOut} title="Отдалить (Ctrl+Minus)">
+                  <ZoomOutIcon />
+                </button>
+                <button className="tool-btn" onClick={resetZoom} title="Сбросить масштаб (Ctrl+0)">
+                  <ResetZoomIcon />
+                </button>
+              </div>
+
+              <div className="tool-divider" />
+
+              <div className="tool-group">
+                <button 
+                  className={`tool-btn ${showGrid ? 'active' : ''}`} 
+                  onClick={() => setShowGrid(!showGrid)} 
+                  title="Сетка (Ctrl+G)"
+                >
+                  <GridIcon />
+                </button>
+                <button className="tool-btn" onClick={undo} title="Отменить (Ctrl+Z)">
+                  <UndoIcon />
+                </button>
+                <button className="tool-btn" onClick={redo} title="Повторить (Ctrl+Y)">
+                  <RedoIcon />
+                </button>
+              </div>
+
+              <div className="tool-divider" />
+
+              <div className="tool-group">
+                <button className="tool-btn" onClick={moveElementUp} title="Вверх (Ctrl+Up)">
+                  <ArrowUpIcon />
+                </button>
+                <button className="tool-btn" onClick={moveElementDown} title="Вниз (Ctrl+Down)">
+                  <ArrowDownIcon />
+                </button>
+                <button className="tool-btn" onClick={bringToFront} title="На передний план (Ctrl+Shift+Up)">
+                  <FrontIcon />
+                </button>
+                <button className="tool-btn" onClick={sendToBack} title="На задний план (Ctrl+Shift+Down)">
+                  <BackIcon />
+                </button>
+              </div>
             </div>
-            <div className="tool-group">
-              <button className={`tool-btn ${showGrid ? 'active' : ''}`} onClick={() => setShowGrid(!showGrid)} title="Показать сетку (Ctrl+G)">⊞</button>
-              <button className="tool-btn" onClick={undo} title="Отменить (Ctrl+Z)">↩️</button>
-              <button className="tool-btn" onClick={redo} title="Повторить (Ctrl+Y)">↪️</button>
+
+            {/* Индикатор масштаба */}
+            <div className="zoom-indicator">
+              {Math.round(zoomLevel * 100)}%
             </div>
-            <div className="tool-group">
-              <button className="tool-btn" onClick={moveElementUp} title="Переместить выше (Ctrl+↑)">⬆️</button>
-              <button className="tool-btn" onClick={moveElementDown} title="Переместить ниже (Ctrl+↓)">⬇️</button>
-              <button className="tool-btn" onClick={bringToFront} title="На передний план (Ctrl+Shift+↑)">📌</button>
-              <button className="tool-btn" onClick={sendToBack} title="На задний план (Ctrl+Shift+↓)">💠</button>
-            </div>
+
+            {showGrid && <GridOverlay />}
+          </div>
+
+          {/* Быстрые действия под канвасом (для мобильных) */}
+          <div className="quick-actions">
+            <button className="quick-action-btn" onClick={addTextBlock}>
+              ➕ Текст
+            </button>
+            <button className="quick-action-btn" onClick={toggleDrawingMode}>
+              ✏️ Рисовать
+            </button>
           </div>
         </div>
 
-        {/* Панель управления */}
-        <div className="control-panel">
-          {/* Настройки блоков */}
-          <div className="control-section">
-            <h3 className="section-title" onClick={() => setSectionExpanded(!sectionExpanded)}>
-              <span>Настройки блоков</span>
-              <span>{sectionExpanded ? '▲' : '▼'}</span>
-            </h3>
-
-            {sectionExpanded && (
-              <div className="section-content">
-                <div className="control-group">
-                  <label>📦 Блоки:</label>
-                  <div className="text-blocks-controls">
-                    <button className="control-button" onClick={addTextBlock} title="Добавить текст (Ins)">➕</button>
-                    <button className="control-button" onClick={removeTextBlock} disabled={memeElements.length <= 1} title="Удалить блок (Del)">➖</button>
-                    <button className="control-button" onClick={duplicateTextBlock} title="Дублировать блок (Ctrl+D)">📋</button>
-                    <div className="active-text-indicator" style={{ background: getBlockColor() }}>
-                      Блок {activeBlockIndex + 1}/{memeElements.length}
-                    </div>
-                  </div>
-                </div>
-
-                {currentBlock?.elementType === 'Text' && (
-                  <>
-                    <div className="control-group">
-                      <label>✏️ Текст:</label>
-                      <input type="text" className="form-input" value={currentBlock.text} onChange={changeText} />
-                    </div>
-
-                    <div className="control-group">
-                      <label>🔤 Шрифт:</label>
-                      <select className="form-select" value={currentBlock.fontFamily} onChange={changeFontFamily}>
-                        <option value="Impact">Impact</option>
-                        <option value="Arial Black">Arial Black</option>
-                        <option value="Comic Sans MS">Comic Sans MS</option>
-                        <option value="Times New Roman">Times New Roman</option>
-                        <option value="Courier New">Courier New</option>
-                        <option value="Georgia">Georgia</option>
-                        <option value="Verdana">Verdana</option>
-                      </select>
-                    </div>
-
-                    <div className="control-group">
-                      <label>📏 Размер: {currentBlock.fontSize} px</label>
-                      <input type="range" className="form-range" min="16" max="80" step="2" value={currentBlock.fontSize} onChange={changeFontSize} />
-                    </div>
-
-                    <div className="control-group">
-                      <label>🎨 Стиль:</label>
-                      <div className="text-blocks-controls">
-                        <button className={`control-button ${currentBlock.fontWeight === 'bold' ? 'active' : ''}`} onClick={toggleBold}><b>B</b></button>
-                        <button className={`control-button ${currentBlock.fontStyle === 'italic' ? 'active' : ''}`} onClick={toggleItalic}><i>I</i></button>
-                        <button className={`control-button ${currentBlock.textDecoration === 'underline' ? 'active' : ''}`} onClick={toggleUnderline}><u>U</u></button>
-                      </div>
-                    </div>
-
-                    <div className="color-controls">
-                      <div className="color-control">
-                        <label>🎨 Цвет:</label>
-                        <input type="color" className="form-color" value={currentBlock.color} onChange={changeColor} />
-                      </div>
-                      <div className="color-control">
-                        <label>✒️ Обводка:</label>
-                        <input type="color" className="form-color" value={currentBlock.strokeColor} onChange={changeStrokeColor} />
-                      </div>
-                    </div>
-
-                    <div className="control-group">
-                      <label>
-                        <input type="checkbox" checked={currentBlock.showShadow} onChange={toggleShowShadow} />
-                        🌑 Тень
-                      </label>
-                      {currentBlock.showShadow && (
-                        <div className="shadow-controls">
-                          <div className="color-control">
-                            <label>Цвет тени:</label>
-                            <input type="color" className="form-color" value={currentBlock.shadowColor} onChange={changeShadowColor} />
-                          </div>
-                          <div className="control-group">
-                            <label>Смещение: {currentBlock.shadowOffset} px</label>
-                            <input type="range" className="form-range" min="0" max="20" step="1" value={currentBlock.shadowOffset} onChange={changeShadowOffset} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="control-group">
-                      <label>
-                        <input type="checkbox" checked={currentBlock.useGradient} onChange={toggleUseGradient} />
-                        🌈 Градиент
-                      </label>
-                      {currentBlock.useGradient && (
-                        <div className="color-controls">
-                          <div className="color-control">
-                            <label>Градиент от:</label>
-                            <input type="color" className="form-color" value={currentBlock.gradientStartColor} onChange={changeGradientStartColor} />
-                          </div>
-                          <div className="color-control">
-                            <label>Градиент до:</label>
-                            <input type="color" className="form-color" value={currentBlock.gradientEndColor} onChange={changeGradientEndColor} />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {currentBlock?.elementType === 'Sticker' && (
-                  <>
-                    <div className="control-group">
-                      <label>📐 Размер стикера: {Math.round(currentBlock.width / 800 * 100)}%</label>
-                      <input type="range" className="form-range" min="50" max="300" step="5" value={currentBlock.width} onChange={changeStickerSize} />
-                    </div>
-
-                    <div className="control-group">
-                      <label>🔮 Прозрачность: {Math.round(currentBlock.opacity * 100)}%</label>
-                      <input type="range" className="form-range" min="20" max="100" step="5" value={currentBlock.opacity * 100} onChange={changeStickerOpacity} />
-                    </div>
-                  </>
-                )}
-
-                <div className="control-group">
-                  <label>🔄 Наклон: {currentBlock?.rotation || 0}°</label>
-                  <input type="range" className="form-range" min="-180" max="180" step="5" value={currentBlock?.rotation || 0} onChange={changeRotation} />
-                </div>
-              </div>
-            )}
+        {/* Боковая панель (может скрываться на мобильных) */}
+        <div className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+          <div className="sidebar-header">
+            <h2>Редактор мемов</h2>
+            <button className="close-sidebar" onClick={toggleMobileMenu}>✕</button>
           </div>
 
-          {/* Шаблоны */}
-          <div className="control-section">
-            <h3 className="section-title">🎭 Шаблоны</h3>
-
-            <div className="upload-section">
-              <button className="upload-button" onClick={uploadCustomImage}>
-                📤 Загрузить свое изображение
-              </button>
-              <input type="file" accept="image/jpeg,image/jpg,image/png" style={{ display: 'none' }} ref={fileInputRef} onChange={handleFileSelected} />
-            </div>
-          </div>
-
-          {/* Фильтры */}
-          <div className="control-section">
-            <h3 className="section-title">✨ Эффекты</h3>
-            <div className="control-group">
-              <div className="text-blocks-controls">
-                <button className="control-button" onClick={resetFilters}>🔄</button>
-                <button className={`control-button ${imageFilters.grayscale ? 'active' : ''}`} onClick={toggleGrayscale}>⚫</button>
-                <button className={`control-button ${imageFilters.sepia ? 'active' : ''}`} onClick={toggleSepia}>🔶</button>
-                <button className={`control-button ${imageFilters.invert ? 'active' : ''}`} onClick={toggleInvert}>🔄</button>
-              </div>
-            </div>
-            <div>
-              <div className="control-group">
-                <label>💡 Яркость: {imageFilters.brightness}%</label>
-                <input type="range" min="50" max="150" step="5" value={imageFilters.brightness} onChange={changeBrightness} />
-              </div>
-              <div className="control-group">
-                <label>🎨 Контраст: {imageFilters.contrast}%</label>
-                <input type="range" min="50" max="150" step="5" value={imageFilters.contrast} onChange={changeContrast} />
-              </div>
-              <div className="control-group">
-                <label>🌈 Насыщенность: {imageFilters.saturate}%</label>
-                <input type="range" min="0" max="200" step="5" value={imageFilters.saturate} onChange={changeSaturate} />
-              </div>
-              <div className="control-group">
-                <label>💨 Размытие: {imageFilters.blur}px</label>
-                <input type="range" min="0" max="10" step="0.5" value={imageFilters.blur} onChange={changeBlur} />
-              </div>
-            </div>
-          </div>
-
-          {/* Инструменты рисования */}
-          <div className="control-section">
-            <h3 className="section-title">✏️ Рисование</h3>
-
-            <div className="control-group">
-              <button
-                className={`control-button ${drawingMode ? 'active' : ''}`}
-                onClick={toggleDrawingMode}
-                style={{ width: '100%', marginBottom: '10px' }}
+          <div className="sidebar-content">
+            {/* Вкладки для лучшей организации */}
+            <div className="tabs">
+              <button 
+                className={`tab ${activeTab === 'elements' ? 'active' : ''}`}
+                onClick={() => setActiveTab('elements')}
               >
-                {drawingMode ? '🔴 Режим рисования (Вкл)' : '⚫ Режим рисования (Выкл)'}
+                📦 Элементы
+              </button>
+              <button 
+                className={`tab ${activeTab === 'filters' ? 'active' : ''}`}
+                onClick={() => setActiveTab('filters')}
+              >
+                ✨ Эффекты
+              </button>
+              <button 
+                className={`tab ${activeTab === 'draw' ? 'active' : ''}`}
+                onClick={() => setActiveTab('draw')}
+              >
+                ✏️ Рисование
+              </button>
+              <button 
+                className={`tab ${activeTab === 'stickers' ? 'active' : ''}`}
+                onClick={() => setActiveTab('stickers')}
+              >
+                😊 Стикеры
               </button>
             </div>
 
-            {drawingMode && (
-              <>
-                <div className="control-group">
-                  <label>🖌️ Размер кисти: {brushSize}px</label>
-                  <input
-                    type="range"
-                    className="form-range"
-                    min="2"
-                    max="50"
-                    step="1"
-                    value={brushSize}
-                    onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                  />
+            {/* Вкладка элементов */}
+            {activeTab === 'elements' && (
+              <div className="tab-content">
+                {/* Управление блоками */}
+                <div className="control-card">
+                  <div className="card-header">
+                    <h3>Блоки</h3>
+                    <div className="block-buttons">
+                      <button className="icon-btn" onClick={addTextBlock} title="Добавить текст">
+                        ➕
+                      </button>
+                      <button className="icon-btn" onClick={removeTextBlock} disabled={memeElements.length <= 1}>
+                        ➖
+                      </button>
+                      <button className="icon-btn" onClick={duplicateTextBlock}>
+                        📋
+                      </button>
+                    </div>
+                  </div>
+                  <div className="block-indicator">
+                    {memeElements.map((el, idx) => (
+                      <div 
+                        key={idx}
+                        className={`block-dot ${idx === activeBlockIndex ? 'active' : ''}`}
+                        onClick={() => setActiveBlockIndex(idx)}
+                        style={{ background: getBlockColor(el) }}
+                      />
+                    ))}
+                  </div>
                 </div>
 
-                <div className="control-group">
-                  <label>🎨 Цвет кисти:</label>
-                  <input
-                    type="color"
-                    className="form-color"
-                    value={brushColor}
-                    onChange={(e) => setBrushColor(e.target.value)}
-                    style={{ width: '100%', marginTop: '5px' }}
+                {/* Свойства текущего блока */}
+                {currentBlock && (
+                  <div className="control-card">
+                    <h3>Свойства</h3>
+                    
+                    {currentBlock.elementType === 'Text' && (
+                      <>
+                        <div className="form-group">
+                          <label>Текст</label>
+                          <input 
+                            type="text" 
+                            className="form-control"
+                            value={currentBlock.text} 
+                            onChange={changeText}
+                            maxLength={200}
+                          />
+                        </div>
+
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Шрифт</label>
+                            <select className="form-control" value={currentBlock.fontFamily} onChange={changeFontFamily}>
+                              <option value="Impact">Impact</option>
+                              <option value="Arial Black">Arial Black</option>
+                              <option value="Comic Sans MS">Comic Sans MS</option>
+                              <option value="Times New Roman">Times New Roman</option>
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label>Размер</label>
+                            <input 
+                              type="range" 
+                              className="form-range"
+                              min="16" 
+                              max="80" 
+                              value={currentBlock.fontSize} 
+                              onChange={changeFontSize}
+                            />
+                            <span className="range-value">{currentBlock.fontSize}px</span>
+                          </div>
+                        </div>
+
+                        <div className="button-group">
+                          <button 
+                            className={`style-btn ${currentBlock.fontWeight === 'bold' ? 'active' : ''}`}
+                            onClick={toggleBold}
+                          >
+                            <b>Ж</b>
+                          </button>
+                          <button 
+                            className={`style-btn ${currentBlock.fontStyle === 'italic' ? 'active' : ''}`}
+                            onClick={toggleItalic}
+                          >
+                            <i>К</i>
+                          </button>
+                          <button 
+                            className={`style-btn ${currentBlock.textDecoration === 'underline' ? 'active' : ''}`}
+                            onClick={toggleUnderline}
+                          >
+                            <u>Ч</u>
+                          </button>
+                        </div>
+
+                        <div className="form-row">
+                          <div className="form-group">
+                            <label>Цвет</label>
+                            <input type="color" className="form-color" value={currentBlock.color} onChange={changeColor} />
+                          </div>
+                          <div className="form-group">
+                            <label>Обводка</label>
+                            <input type="color" className="form-color" value={currentBlock.strokeColor} onChange={changeStrokeColor} />
+                          </div>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="checkbox">
+                            <input type="checkbox" checked={currentBlock.showShadow} onChange={toggleShowShadow} />
+                            <span>🌑 Тень</span>
+                          </label>
+                        </div>
+
+                        {currentBlock.showShadow && (
+                          <div className="nested-controls">
+                            <div className="form-group">
+                              <label>Цвет тени</label>
+                              <input type="color" className="form-color" value={currentBlock.shadowColor} onChange={changeShadowColor} />
+                            </div>
+                            <div className="form-group">
+                              <label>Смещение: {currentBlock.shadowOffset}px</label>
+                              <input type="range" min="0" max="20" value={currentBlock.shadowOffset} onChange={changeShadowOffset} />
+                            </div>
+                          </div>
+                        )}
+                          {/* ГРАДИЕНТ - с вашими функциями */}
+                        <div className="form-group">
+                          <label className="checkbox">
+                            <input 
+                              type="checkbox" 
+                              checked={currentBlock.useGradient} 
+                              onChange={toggleUseGradient} 
+                            />
+                            <span>🌈 Градиент</span>
+                          </label>
+                        </div>
+
+                        {currentBlock.useGradient && (
+                          <div className="nested-controls">
+                            <div className="form-row">
+                              <div className="form-group">
+                                <label>Градиент от</label>
+                                <input 
+                                  type="color" 
+                                  className="form-color" 
+                                  value={currentBlock.gradientStartColor} 
+                                  onChange={changeGradientStartColor} 
+                                />
+                              </div>
+                              <div className="form-group">
+                                <label>Градиент до</label>
+                                <input 
+                                  type="color" 
+                                  className="form-color" 
+                                  value={currentBlock.gradientEndColor} 
+                                  onChange={changeGradientEndColor} 
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {currentBlock.elementType === 'Sticker' && (
+                      <>
+                        <div className="form-group">
+                          <label>Размер</label>
+                          <input 
+                            type="range" 
+                            min="50" 
+                            max="300" 
+                            value={currentBlock.width} 
+                            onChange={changeStickerSize}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label>Прозрачность: {Math.round(currentBlock.opacity * 100)}%</label>
+                          <input 
+                            type="range" 
+                            min="20" 
+                            max="100" 
+                            value={currentBlock.opacity * 100} 
+                            onChange={changeStickerOpacity}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    <div className="form-group">
+                      <label>Поворот: {currentBlock.rotation || 0}°</label>
+                      <input 
+                        type="range" 
+                        min="-180" 
+                        max="180" 
+                        value={currentBlock.rotation || 0} 
+                        onChange={changeRotation}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Загрузка изображения */}
+                <div className="control-card">
+                  <h3>Фон</h3>
+                  <button className="btn-primary btn-block" onClick={uploadCustomImage}>
+                    📤 Загрузить изображение
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileSelected}
+                    accept="image/jpeg,image/jpg,image/png"
+                    style={{ display: 'none' }}
                   />
                 </div>
-                <div className="control-group">
-                  <label>📐 Слой рисунка:</label>
-                  <div className="text-blocks-controls" style={{ marginTop: '5px' }}>
-                    <button
-                      className={`control-button ${drawingLayer === 'bottom' ? 'active' : ''}`}
-                      onClick={() => {
-                        setDrawingLayer('bottom');
-                        saveToHistory();
-                        redrawMeme();
-                      }}
-                      style={{ flex: 1 }}
+              </div>
+            )}
+
+            {/* Вкладка эффектов */}
+            {activeTab === 'filters' && (
+              <div className="tab-content">
+                <div className="control-card">
+                  <h3>Быстрые эффекты</h3>
+                  <div className="filter-grid">
+                    <button 
+                      className={`filter-btn ${imageFilters.grayscale ? 'active' : ''}`}
+                      onClick={toggleGrayscale}
                     >
-                      ⬇️ Под элементами
+                      ⚫ Ч/Б
                     </button>
-                    <button
-                      className={`control-button ${drawingLayer === 'top' ? 'active' : ''}`}
-                      onClick={() => {
-                        setDrawingLayer('top');
-                        saveToHistory();
-                        redrawMeme();
-                      }}
-                      style={{ flex: 1 }}
+                    <button 
+                      className={`filter-btn ${imageFilters.sepia ? 'active' : ''}`}
+                      onClick={toggleSepia}
                     >
-                      ⬆️ Поверх элементов
+                      🔶 Сепия
+                    </button>
+                    <button 
+                      className={`filter-btn ${imageFilters.invert ? 'active' : ''}`}
+                      onClick={toggleInvert}
+                    >
+                      🔄 Инверсия
+                    </button>
+                    <button className="filter-btn" onClick={resetFilters}>
+                      🔄 Сброс
                     </button>
                   </div>
                 </div>
 
-                <div className="control-group">
-                  <button
-                    className="control-button"
-                    onClick={clearDrawing}
-                    style={{ width: '100%', background: '#e74c3c', color: 'white' }}
-                  >
-                    🗑️ Очистить рисунок
-                  </button>
-                </div>
+                <div className="control-card">
+                  <h3>Настройки</h3>
+                  
+                  <div className="form-group">
+                    <label>Яркость: {imageFilters.brightness}%</label>
+                    <input 
+                      type="range" 
+                      min="50" 
+                      max="150" 
+                      value={imageFilters.brightness} 
+                      onChange={changeBrightness}
+                    />
+                  </div>
 
-                <div className="drawing-preview" style={{
-                  marginTop: '10px',
-                  padding: '10px',
-                  background: '#f0f0f0',
-                  borderRadius: '5px',
-                  fontSize: '12px',
-                  textAlign: 'center'
-                }}>
-                  <small>💡 Совет: Зажмите левую кнопку мыши и водите по канвасу для рисования</small>
+                  <div className="form-group">
+                    <label>Контраст: {imageFilters.contrast}%</label>
+                    <input 
+                      type="range" 
+                      min="50" 
+                      max="150" 
+                      value={imageFilters.contrast} 
+                      onChange={changeContrast}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Насыщенность: {imageFilters.saturate}%</label>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="200" 
+                      value={imageFilters.saturate} 
+                      onChange={changeSaturate}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Размытие: {imageFilters.blur}px</label>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="10" 
+                      step="0.5" 
+                      value={imageFilters.blur} 
+                      onChange={changeBlur}
+                    />
+                  </div>
                 </div>
-              </>
+              </div>
             )}
-          </div>
 
-          {/* Стикеры */}
-          <div className="control-section">
-            <h3 className="section-title">😊 Стикеры</h3>
+            {/* Вкладка рисования */}
+            {activeTab === 'draw' && (
+              <div className="tab-content">
+                <div className="control-card">
+                  <button 
+                    className={`btn-draw-mode ${drawingMode ? 'active' : ''}`}
+                    onClick={toggleDrawingMode}
+                  >
+                    {drawingMode ? '🔴 Выйти из режима рисования' : '⚫ Войти в режим рисования'}
+                  </button>
 
-            <div className="sticker-categories">
-              <select className="form-select" value={selectedStickerCategory} onChange={changeStickerCategory}>
-                <option value="all">Все</option>
-                <option value="1-1000">1-1000</option>
-                <option value="1000-2000">1000-2000</option>
-                <option value="2000-3000">2000-3000</option>
-              </select>
-            </div>
+                  {drawingMode && (
+                    <>
+                      <div className="form-group">
+                        <label>Размер кисти: {brushSize}px</label>
+                        <input 
+                          type="range" 
+                          min="2" 
+                          max="50" 
+                          value={brushSize} 
+                          onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                        />
+                      </div>
 
-            <div className="pagination-container">
-              <button className="pagination-btn" onClick={previousPage} disabled={currentPage <= 1}>◀</button>
-              <span className="pagination-info">Страница {currentPage} из {totalPages} ({filteredStickers.length} стикеров)</span>
-              <button className="pagination-btn" onClick={nextPage} disabled={currentPage >= totalPages}>▶</button>
-            </div>
+                      <div className="form-group">
+                        <label>Цвет кисти</label>
+                        <input 
+                          type="color" 
+                          className="form-color" 
+                          value={brushColor} 
+                          onChange={(e) => setBrushColor(e.target.value)}
+                        />
+                      </div>
 
-            <div className="stickers-grid">
-              {getCurrentPageStickers().map((sticker, idx) => (
-                <div key={idx} className="sticker-item" onClick={() => addSticker(sticker)}>
-                  <img src={sticker.url} alt={sticker.name} />
-                  <div className="sticker-name">{sticker.name}</div>
+                      <div className="form-group">
+                        <label>Слой</label>
+                        <div className="button-group">
+                          <button 
+                            className={`layer-btn ${drawingLayer === 'bottom' ? 'active' : ''}`}
+                            onClick={() => setDrawingLayer('bottom')}
+                          >
+                            Под элементами
+                          </button>
+                          <button 
+                            className={`layer-btn ${drawingLayer === 'top' ? 'active' : ''}`}
+                            onClick={() => setDrawingLayer('top')}
+                          >
+                            Поверх элементов
+                          </button>
+                        </div>
+                      </div>
+
+                      <button className="btn-danger btn-block" onClick={clearDrawing}>
+                        🗑️ Очистить рисунок
+                      </button>
+
+                      <div className="info-message">
+                        💡 Зажмите левую кнопку мыши и водите по канвасу
+                      </div>
+                    </>
+                  )}
                 </div>
-              ))}
-            </div>
-          </div>
+              </div>
+            )}
 
-          {/* Скачивание */}
-          <div className="submit-section">
-            <button className="download-button" onClick={downloadMeme}>💾 Скачать</button>
+            {/* Вкладка стикеров */}
+            {activeTab === 'stickers' && (
+              <div className="tab-content">
+                <div className="control-card">
+                  <div className="form-group">
+                    <select className="form-control" value={selectedStickerCategory} onChange={changeStickerCategory}>
+                      <option value="all">Все стикеры</option>
+                      <option value="1-1000">Популярные (1-1000)</option>
+                      <option value="1000-2000">Классические (1000-2000)</option>
+                      <option value="2000-3000">Новые (2000-3000)</option>
+                    </select>
+                  </div>
+
+                  <div className="pagination">
+                    <button className="page-btn" onClick={previousPage} disabled={currentPage <= 1}>
+                      ◀
+                    </button>
+                    <span className="page-info">
+                      {currentPage} / {totalPages}
+                    </span>
+                    <button className="page-btn" onClick={nextPage} disabled={currentPage >= totalPages}>
+                      ▶
+                    </button>
+                  </div>
+
+                  <div className="stickers-grid">
+                    {getCurrentPageStickers().map((sticker, idx) => (
+                      <div key={idx} className="sticker-card" onClick={() => addSticker(sticker)}>
+                        <img src={sticker.url} alt={sticker.name} loading="lazy" />
+                        <span className="sticker-label">{sticker.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {isLoading && (
-        <div className="loading-overlay">
-          <div className="spinner"></div>
-          <p>Загрузка мема...</p>
-        </div>
-      )}
+      {isLoading && <LoadingOverlay />}
     </div>
   );
 };
+
+// Иконки (используем простые SVG для кросс-платформенности)
+const ZoomInIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>;
+const ZoomOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>;
+const ResetZoomIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg>;
+const GridIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="3" x2="21" y2="3"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/></svg>;
+const UndoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>;
+const RedoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>;
+const ArrowUpIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>;
+const ArrowDownIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>;
+const FrontIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16"/><rect x="8" y="8" width="12" height="12"/></svg>;
+const BackIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16"/><rect x="8" y="8" width="8" height="8"/></svg>;
+
+// Компоненты
+const GridOverlay = () => (
+  <div className="grid-overlay">
+    {[0, 1, 2].map(i => (
+      <React.Fragment key={i}>
+        <div className="grid-line vertical" style={{ left: `${(i + 1) * 25}%` }} />
+        <div className="grid-line horizontal" style={{ top: `${(i + 1) * 25}%` }} />
+      </React.Fragment>
+    ))}
+  </div>
+);
+
+const LoadingOverlay = () => (
+  <div className="loading-overlay">
+    <div className="spinner"></div>
+    <p>Загрузка...</p>
+  </div>
+);
 
 export default MemeEditor;
