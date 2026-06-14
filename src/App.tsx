@@ -499,54 +499,6 @@ const draw = useCallback((e: any) => {
     await redrawMeme();
   };
 
-  const moveElementUp = async () => {
-    if (activeBlockIndex >= memeElements.length - 1) return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    const element = newElements[activeBlockIndex];
-    newElements.splice(activeBlockIndex, 1);
-    newElements.splice(activeBlockIndex + 1, 0, element);
-    setMemeElements(newElements);
-    setActiveBlockIndex(activeBlockIndex + 1);
-    await redrawMeme();
-  };
-
-  const moveElementDown = async () => {
-    if (activeBlockIndex <= 0) return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    const element = newElements[activeBlockIndex];
-    newElements.splice(activeBlockIndex, 1);
-    newElements.splice(activeBlockIndex - 1, 0, element);
-    setMemeElements(newElements);
-    setActiveBlockIndex(activeBlockIndex - 1);
-    await redrawMeme();
-  };
-
-  const bringToFront = async () => {
-    if (activeBlockIndex >= memeElements.length - 1) return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    const element = newElements[activeBlockIndex];
-    newElements.splice(activeBlockIndex, 1);
-    newElements.push(element);
-    setMemeElements(newElements);
-    setActiveBlockIndex(newElements.length - 1);
-    await redrawMeme();
-  };
-
-  const sendToBack = async () => {
-    if (activeBlockIndex <= 0) return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    const element = newElements[activeBlockIndex];
-    newElements.splice(activeBlockIndex, 1);
-    newElements.unshift(element);
-    setMemeElements(newElements);
-    setActiveBlockIndex(0);
-    await redrawMeme();
-  };
-
   // Функции загрузки изображений
   const uploadCustomImage = () => {
     fileInputRef.current?.click();
@@ -567,81 +519,46 @@ const draw = useCallback((e: any) => {
     reader.readAsDataURL(file);
   };
 
-  // Функции изменения свойств
-  const changeText = async (e: any) => {
+  const updateTextProperty = async <K extends keyof TextBlock>(
+    property: K,
+    value: TextBlock[K]
+  ) => {
     if (!currentBlock || currentBlock.elementType !== 'Text') return;
     saveToHistory();
     const newElements = [...memeElements];
-    newElements[activeBlockIndex].text = e.target.value;
+    (newElements[activeBlockIndex] as TextBlock)[property] = value;
+    setMemeElements(newElements);
+    await redrawMeme();
+  };
+  
+  const toggleTextProperty = async <K extends keyof TextBlock>(
+    property: K,
+    value1: TextBlock[K],
+    value2: TextBlock[K]
+  ) => {
+    if (!currentBlock || currentBlock.elementType !== 'Text') return;
+    saveToHistory();
+    const newElements = [...memeElements];
+    const currentValue = newElements[activeBlockIndex][property];
+    newElements[activeBlockIndex][property] = currentValue === value1 ? value2 : value1;
     setMemeElements(newElements);
     await redrawMeme();
   };
 
-  const changeFontFamily = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].fontFamily = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const toggleBold = async () => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].fontWeight =
-      newElements[activeBlockIndex].fontWeight === 'bold' ? 'normal' : 'bold';
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const toggleItalic = async () => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].fontStyle =
-      newElements[activeBlockIndex].fontStyle === 'italic' ? 'normal' : 'italic';
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const toggleUnderline = async () => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].textDecoration =
-      newElements[activeBlockIndex].textDecoration === 'underline' ? 'none' : 'underline';
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeColor = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].color = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeStrokeColor = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].strokeColor = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeFontSize = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].fontSize = parseInt(e.target.value);
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
+  const changeText = (e: any) => updateTextProperty('text', e.target.value);
+  const changeColor = (e: any) => updateTextProperty('color', e.target.value);
+  const changeStrokeColor = (e: any) => updateTextProperty('strokeColor', e.target.value);
+  const changeFontSize = (e: any) => updateTextProperty('fontSize', parseInt(e.target.value));
+  const changeFontFamily = (e: any) => updateTextProperty('fontFamily', e.target.value);
+  const toggleShowShadow = (e: any) => updateTextProperty('showShadow', e.target.checked);
+  const changeShadowColor = (e: any) => updateTextProperty('shadowColor', e.target.value);
+  const changeShadowOffset = (e: any) => updateTextProperty('shadowOffset', parseInt(e.target.value));
+  const toggleUseGradient = (e: any) => updateTextProperty('useGradient', e.target.checked);
+  const changeGradientStartColor = (e: any) => updateTextProperty('gradientStartColor', e.target.value);
+  const changeGradientEndColor = (e: any) => updateTextProperty('gradientEndColor', e.target.value);
+  const toggleBold = () => toggleTextProperty('fontWeight', 'bold', 'normal');
+  const toggleItalic = () => toggleTextProperty('fontStyle', 'italic', 'normal');
+  const toggleUnderline = () => toggleTextProperty('textDecoration', 'underline', 'none');
 
   const changeRotation = async (e: any) => {
     if (!currentBlock) return;
@@ -673,134 +590,48 @@ const draw = useCallback((e: any) => {
     await redrawMeme();
   };
 
-  const toggleShowShadow = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].showShadow = e.target.checked;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeShadowColor = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].shadowColor = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeShadowOffset = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].shadowOffset = parseInt(e.target.value);
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const toggleUseGradient = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].useGradient = e.target.checked;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeGradientStartColor = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].gradientStartColor = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
-  const changeGradientEndColor = async (e: any) => {
-    if (!currentBlock || currentBlock.elementType !== 'Text') return;
-    saveToHistory();
-    const newElements = [...memeElements];
-    newElements[activeBlockIndex].gradientEndColor = e.target.value;
-    setMemeElements(newElements);
-    await redrawMeme();
-  };
-
   // Функции фильтров
-  const toggleInvert = async () => {
+
+  const updateFilter = async <K extends keyof ImageFilters>(
+    property: K,
+    value: ImageFilters[K]
+  ) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
-      newFilters.invert = !prev.invert;
+      newFilters[property] = value;
       return newFilters;
     });
     await redrawMeme();
   };
 
-  const changeBrightness = async (e: any) => {
+  type BooleanImageFilterKeys = {
+    [K in keyof ImageFilters]: ImageFilters[K] extends boolean ? K : never;
+  }[keyof ImageFilters];
+
+  const toggleFilter = async <K extends BooleanImageFilterKeys>(
+    property: K
+  ) => {
     saveToHistory();
     setImageFilters(prev => {
       const newFilters = prev.clone();
-      newFilters.brightness = parseInt(e.target.value);
+      newFilters[property] = !prev[property];
       return newFilters;
     });
     await redrawMeme();
   };
 
-  const changeContrast = async (e: any) => {
-    saveToHistory();
-    setImageFilters(prev => {
-      const newFilters = prev.clone();
-      newFilters.contrast = parseInt(e.target.value);
-      return newFilters;
-    });
-    await redrawMeme();
-  };
-
-  const changeSaturate = async (e: any) => {
-    saveToHistory();
-    setImageFilters(prev => {
-      const newFilters = prev.clone();
-      newFilters.saturate = parseInt(e.target.value);
-      return newFilters;
-    });
-    await redrawMeme();
-  };
-
-  const changeBlur = async (e: any) => {
-    saveToHistory();
-    setImageFilters(prev => {
-      const newFilters = prev.clone();
-      newFilters.blur = parseFloat(e.target.value);
-      return newFilters;
-    });
-    await redrawMeme();
-  };
+  const changeBrightness = (e: any) => updateFilter('brightness', parseInt(e.target.value));
+  const toggleGrayscale = () => toggleFilter('grayscale');
+  const changeContrast = (e: any) => updateFilter('contrast', parseInt(e.target.value));
+  const toggleSepia = () => toggleFilter('sepia');
+  const changeSaturate = (e: any) => updateFilter('saturate', parseInt(e.target.value));
+  const toggleInvert = () => toggleFilter('invert');
+  const changeBlur = (e: any) => updateFilter('blur', parseFloat(e.target.value));
 
   const resetFilters = async () => {
     saveToHistory();
     setImageFilters(new ImageFilters());
-    await redrawMeme();
-  };
-
-  const toggleGrayscale = async () => {
-    saveToHistory();
-    setImageFilters(prev => {
-      const newFilters = prev.clone();
-      newFilters.grayscale = !prev.grayscale;
-      return newFilters;
-    });
-    await redrawMeme();
-  };
-
-  const toggleSepia = async () => {
-    saveToHistory();
-    setImageFilters(prev => {
-      const newFilters = prev.clone();
-      newFilters.sepia = !prev.sepia;
-      return newFilters;
-    });
     await redrawMeme();
   };
 
@@ -878,6 +709,39 @@ const draw = useCallback((e: any) => {
     redrawDuringDrag(draggingRef.current.elementId, newElementX, newElementY);
 
   }, [getNormalizedCoordinates, redrawDuringDrag]);
+
+  type MoveDirection = 'up' | 'down' | 'front' | 'back';
+
+  const moveElement = async (direction: MoveDirection) => {
+    const isUpOrFront = direction === 'up' || direction === 'front';
+    const isFront = direction === 'front';
+    const isBack = direction === 'back';
+
+    if (isUpOrFront && activeBlockIndex >= memeElements.length - 1) return;
+    if ((direction === 'down' || isBack) && activeBlockIndex <= 0) return;
+
+    saveToHistory();
+    const newElements = [...memeElements];
+    const element = newElements[activeBlockIndex];
+
+    newElements.splice(activeBlockIndex, 1);
+
+    let newIndex: number;
+    if (isFront) newIndex = newElements.length;
+    else if (isBack) newIndex = 0;
+    else if (direction === 'up') newIndex = activeBlockIndex + 1;
+    else newIndex = activeBlockIndex - 1;
+
+    newElements.splice(newIndex, 0, element);
+    setMemeElements(newElements);
+    setActiveBlockIndex(newIndex);
+    await redrawMeme();
+  };
+
+  const moveElementUp = () => moveElement('up');
+  const moveElementDown = () => moveElement('down');
+  const bringToFront = () => moveElement('front');
+  const sendToBack = () => moveElement('back');
 
   const endDrag = useCallback(async () => {
     if (!draggingRef.current.isDragging) return;
