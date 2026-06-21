@@ -169,6 +169,92 @@
   font-family: monospace;
 }
 
+/* Стили для инпута редактирования текста */
+.text-edit-input {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.85);
+  border: 3px solid #667eea;
+  border-radius: 8px;
+  color: white;
+  padding: 8px 16px;
+  outline: none;
+  z-index: 1000;
+  pointer-events: auto;
+  font-family: inherit;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 30px rgba(102, 126, 234, 0.4);
+  animation: pulse-border 1.5s infinite;
+  min-height: 44px;
+  /* Для мобильных */
+  min-width: 100px;
+  max-width: 85%;
+  text-align: center;
+  touch-action: none;
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-appearance: none;
+}
+
+@keyframes pulse-border {
+
+  0%,
+  100% {
+    border-color: #667eea;
+    box-shadow: 0 0 30px rgba(102, 126, 234, 0.4);
+  }
+
+  50% {
+    border-color: #764ba2;
+    box-shadow: 0 0 40px rgba(118, 75, 162, 0.6);
+  }
+}
+
+.text-edit-input:focus {
+  animation: none;
+  border-color: #2ecc71;
+  box-shadow: 0 0 40px rgba(46, 204, 113, 0.4);
+  background: rgba(0, 0, 0, 0.95);
+}
+
+/* Для мобильных устройств */
+@media (max-width: 768px) {
+  .text-edit-input {
+    font-size: 20px !important;
+    /* Увеличиваем шрифт для удобства */
+    padding: 12px 20px;
+    min-height: 50px;
+    min-width: 150px;
+    border-width: 2px;
+  }
+}
+
+/* Для contentEditable версии */
+.text-edit-contenteditable {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.8);
+  border: 2px solid #667eea;
+  border-radius: 4px;
+  color: white;
+  padding: 4px 12px;
+  outline: none;
+  z-index: 100;
+  pointer-events: auto;
+  font-family: inherit;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+  animation: pulse-border 1s infinite;
+  min-width: 50px;
+  max-width: 80%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.text-edit-contenteditable:focus {
+  animation: none;
+  border-color: #2ecc71;
+  box-shadow: 0 0 30px rgba(46, 204, 113, 0.3);
+}
+
 /* Сайдбар - на десктопе справа, на мобильных снизу */
 .sidebar {
   width: 380px;
@@ -673,7 +759,9 @@
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .loading-overlay p {
@@ -694,7 +782,7 @@
   .meme-preview {
     touch-action: pan-y pinch-zoom;
   }
-  
+
   .meme-canvas {
     touch-action: none;
   }
@@ -759,8 +847,13 @@
   }
 
   @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
   }
 
   .close-sidebar {
@@ -815,6 +908,7 @@
 
 /* Для touch-устройств */
 @media (hover: none) and (pointer: coarse) {
+
   .tool-btn:hover,
   .control-button:hover,
   .sticker-card:hover {

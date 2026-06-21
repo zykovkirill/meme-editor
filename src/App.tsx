@@ -19,6 +19,7 @@ const MemeEditor = () => {
     tempX: 0,
     tempY: 0
   });
+  const [highlightMode, setHighlightMode] = useState(false);
   const [drawingMode, setDrawingMode] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [brushSize, setBrushSize] = useState(5);
@@ -51,15 +52,18 @@ const MemeEditor = () => {
     displayHeight?: number;
   } | null>(null);
   const [imageFitMode, setImageFitMode] = useState<'contain' | 'original'>('contain');
-  
+  const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null);
+  const [editingTextValue, setEditingTextValue] = useState<string>('');
+  const textInputRef = useRef<HTMLInputElement | null>(null);
+  const isTextEditConfirmed = useRef(false); // Для предотвращения двойного сохранения
   useEffect(() => {
     memeElementsRef.current = memeElements;
   }, [memeElements]);
-  
+
   useEffect(() => {
     drawingDataRef.current = drawingData;
   }, [drawingData]);
-  
+
   // Вычисляемые значения
   const currentBlock = memeElements[activeBlockIndex];
 
@@ -73,28 +77,86 @@ const MemeEditor = () => {
     setMobileMenuOpen(!mobileMenuOpen);
   };
 
- const getImagePosition = useCallback(() => {
-  if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
+// Хук для принудительного открытия клавиатуры на мобильных
+const useMobileKeyboard = (inputRef: React.RefObject<HTMLInputElement | null>, isEditing: boolean) => {
+  useEffect(() => {
+    if (!isEditing || !inputRef.current) return;
+    
+    const input = inputRef.current;
+    const isMobile = 'ontouchstart' in window;
+    
+    if (!isMobile) return;
+    
+    // Функция для принудительного открытия клавиатуры
+    const forceKeyboardOpen = () => {
+      // Создаем временный инпут для активации клавиатуры
+      const tempInput = document.createElement('input');
+      tempInput.style.position = 'fixed';
+      tempInput.style.opacity = '0';
+      tempInput.style.pointerEvents = 'none';
+      tempInput.style.top = '-1000px';
+      tempInput.style.left = '-1000px';
+      tempInput.setAttribute('inputmode', 'text');
+      document.body.appendChild(tempInput);
+      
+      // Фокусируемся на временном инпуте
+      tempInput.focus();
+      
+      // Затем переключаем фокус на наш инпут
+      setTimeout(() => {
+        input.focus();
+        input.select();
+        document.body.removeChild(tempInput);
+      }, 50);
+    };
+    
+    // Если фокус не установлен автоматически, используем принудительный метод
+    if (document.activeElement !== input) {
+      // Пытаемся сначала обычным способом
+      input.focus();
+      
+      // Проверяем, открылась ли клавиатура (через 100ms)
+      setTimeout(() => {
+        if (document.activeElement !== input) {
+          forceKeyboardOpen();
+        }
+      }, 100);
+    }
+    
+    return () => {
+      // Очистка
+      if (document.activeElement === input) {
+        input.blur();
+      }
+    };
+  }, [isEditing, inputRef]);
+};
 
-  const canvas = canvasRef.current;
-  
-  if (imageInfo && imageInfo.displayWidth && imageInfo.displayHeight) {
-    // Используем сохраненные размеры изображения с учетом зума
-    const width = imageInfo.displayWidth * zoomLevel;
-    const height = imageInfo.displayHeight * zoomLevel;
-    const x = (canvas.width - width) / 2;
-    const y = (canvas.height - height) / 2;
-    return { x, y, width, height };
-  }
+// Использование хука
+useMobileKeyboard(textInputRef, editingTextIndex !== null);
 
-  // Fallback - используем zoom
-  const scaledWidth = canvas.width * zoomLevel;
-  const scaledHeight = canvas.height * zoomLevel;
-  const x = (canvas.width - scaledWidth) / 2;
-  const y = (canvas.height - scaledHeight) / 2;
+  const getImagePosition = useCallback(() => {
+    if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
 
-  return { x, y, width: scaledWidth, height: scaledHeight };
-}, [zoomLevel, imageInfo]);
+    const canvas = canvasRef.current;
+
+    if (imageInfo && imageInfo.displayWidth && imageInfo.displayHeight) {
+      // Используем сохраненные размеры изображения с учетом зума
+      const width = imageInfo.displayWidth * zoomLevel;
+      const height = imageInfo.displayHeight * zoomLevel;
+      const x = (canvas.width - width) / 2;
+      const y = (canvas.height - height) / 2;
+      return { x, y, width, height };
+    }
+
+    // Fallback - используем zoom
+    const scaledWidth = canvas.width * zoomLevel;
+    const scaledHeight = canvas.height * zoomLevel;
+    const x = (canvas.width - scaledWidth) / 2;
+    const y = (canvas.height - scaledHeight) / 2;
+
+    return { x, y, width: scaledWidth, height: scaledHeight };
+  }, [zoomLevel, imageInfo]);
   // Функция для преобразования координат мыши в нормализованные (с учетом zoom)
   const getNormalizedCoordinates = useCallback((clientX: any, clientY: any) => {
     if (!canvasRef.current) return null;
@@ -181,6 +243,176 @@ const MemeEditor = () => {
     await redrawMeme();
   }, [redoStack, saveToHistory]);
 
+const drawHighlightOverlay = useCallback((
+  ctx: CanvasRenderingContext2D,
+  elements: any[],
+  x: number,
+  y: number,
+  scaledWidth: number,
+  scaledHeight: number
+) => {
+  if (!highlightMode) return;
+  
+  ctx.save();
+  
+  for (const element of elements) {
+    const posX = x + scaledWidth * element.x;
+    const posY = y + scaledHeight * element.y;
+    
+    let width, height;
+    
+    if (element.elementType === 'Text') {
+      // Для текста используем приблизительные размеры
+      const fontSize = element.fontSize || 24;
+      const textLength = element.text?.length || 0;
+      const approxWidth = Math.min(textLength * fontSize * 0.6 + 20, scaledWidth * 0.8);
+      const approxHeight = fontSize * 1.5 + 20;
+      
+      width = approxWidth;
+      height = approxHeight;
+      
+      // Рисуем рамку вокруг текста
+      ctx.strokeStyle = 'rgba(102, 126, 234, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(
+        posX - width / 2,
+        posY - height / 2,
+        width,
+        height
+      );
+      
+      // Рисуем уголки
+      const cornerSize = 8;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#667eea';
+      ctx.lineWidth = 2;
+      
+      // Верхний левый угол
+      ctx.beginPath();
+      ctx.moveTo(posX - width / 2, posY - height / 2 + cornerSize);
+      ctx.lineTo(posX - width / 2, posY - height / 2);
+      ctx.lineTo(posX - width / 2 + cornerSize, posY - height / 2);
+      ctx.stroke();
+      
+      // Верхний правый угол
+      ctx.beginPath();
+      ctx.moveTo(posX + width / 2 - cornerSize, posY - height / 2);
+      ctx.lineTo(posX + width / 2, posY - height / 2);
+      ctx.lineTo(posX + width / 2, posY - height / 2 + cornerSize);
+      ctx.stroke();
+      
+      // Нижний левый угол
+      ctx.beginPath();
+      ctx.moveTo(posX - width / 2, posY + height / 2 - cornerSize);
+      ctx.lineTo(posX - width / 2, posY + height / 2);
+      ctx.lineTo(posX - width / 2 + cornerSize, posY + height / 2);
+      ctx.stroke();
+      
+      // Нижний правый угол
+      ctx.beginPath();
+      ctx.moveTo(posX + width / 2 - cornerSize, posY + height / 2);
+      ctx.lineTo(posX + width / 2, posY + height / 2);
+      ctx.lineTo(posX + width / 2, posY + height / 2 - cornerSize);
+      ctx.stroke();
+      
+      // Добавляем полупрозрачный фон
+      ctx.fillStyle = 'rgba(102, 126, 234, 0.1)';
+      ctx.fillRect(
+        posX - width / 2,
+        posY - height / 2,
+        width,
+        height
+      );
+      
+      // Показываем размеры
+      ctx.fillStyle = 'rgba(102, 126, 234, 0.9)';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const sizeText = `${Math.round(width)}×${Math.round(height)}px`;
+      ctx.fillText(
+        sizeText,
+        posX + width / 2 + 4,
+        posY - height / 2
+      );
+      
+    } else if (element.elementType === 'Sticker') {
+      // Для стикеров используем реальные размеры
+      width = element.width || 80;
+      height = element.height || 80;
+      
+      // Рисуем рамку вокруг стикера
+      ctx.strokeStyle = 'rgba(243, 156, 18, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.strokeRect(
+        posX - width / 2,
+        posY - height / 2,
+        width,
+        height
+      );
+      
+      // Рисуем уголки
+      const cornerSize = 8;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#f39c12';
+      ctx.lineWidth = 2;
+      
+      // Верхний левый угол
+      ctx.beginPath();
+      ctx.moveTo(posX - width / 2, posY - height / 2 + cornerSize);
+      ctx.lineTo(posX - width / 2, posY - height / 2);
+      ctx.lineTo(posX - width / 2 + cornerSize, posY - height / 2);
+      ctx.stroke();
+      
+      // Верхний правый угол
+      ctx.beginPath();
+      ctx.moveTo(posX + width / 2 - cornerSize, posY - height / 2);
+      ctx.lineTo(posX + width / 2, posY - height / 2);
+      ctx.lineTo(posX + width / 2, posY - height / 2 + cornerSize);
+      ctx.stroke();
+      
+      // Нижний левый угол
+      ctx.beginPath();
+      ctx.moveTo(posX - width / 2, posY + height / 2 - cornerSize);
+      ctx.lineTo(posX - width / 2, posY + height / 2);
+      ctx.lineTo(posX - width / 2 + cornerSize, posY + height / 2);
+      ctx.stroke();
+      
+      // Нижний правый угол
+      ctx.beginPath();
+      ctx.moveTo(posX + width / 2 - cornerSize, posY + height / 2);
+      ctx.lineTo(posX + width / 2, posY + height / 2);
+      ctx.lineTo(posX + width / 2, posY + height / 2 - cornerSize);
+      ctx.stroke();
+      
+      // Добавляем полупрозрачный фон
+      ctx.fillStyle = 'rgba(243, 156, 18, 0.1)';
+      ctx.fillRect(
+        posX - width / 2,
+        posY - height / 2,
+        width,
+        height
+      );
+      
+      // Показываем размеры
+      ctx.fillStyle = 'rgba(243, 156, 18, 0.9)';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const sizeText = `${Math.round(width)}×${Math.round(height)}px`;
+      ctx.fillText(
+        sizeText,
+        posX + width / 2 + 4,
+        posY - height / 2
+      );
+    }
+  }
+  
+  ctx.restore();
+}, [highlightMode]);
+
   const redrawDuringDrag = useCallback(async (draggedElementId: any, newX: number, newY: number) => {
     if (!selectedTemplate || !canvasRef.current) return;
 
@@ -213,26 +445,26 @@ const MemeEditor = () => {
       if (drawingLayer === 'bottom') {
         drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
         await drawElementsOnCanvas(
-          ctx, currentElements, stickerImages, 
+          ctx, currentElements, stickerImages,
           imgPos.x, imgPos.y, imgPos.width, imgPos.height,
           draggedElementId, newX, newY, true
         );
       } else {
         await drawElementsOnCanvas(
-          ctx, currentElements, stickerImages, 
+          ctx, currentElements, stickerImages,
           imgPos.x, imgPos.y, imgPos.width, imgPos.height,
           draggedElementId, newX, newY, true
         );
         drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
       }
-      
+
     } catch (error) {
       console.error('Error during drag redraw:', error);
     }
   }, [selectedTemplate, getImagePosition, drawingData, drawingLayer]);
 
   // Функции отрисовки
- const redrawMeme = useCallback(async () => {
+  const redrawMeme = useCallback(async () => {
   if (!selectedTemplate || !canvasRef.current) return;
 
   const canvas = canvasRef.current;
@@ -246,15 +478,12 @@ const MemeEditor = () => {
 
     let x, y, scaledWidth, scaledHeight;
     
-    // Если есть информация об изображении, используем сохраненные размеры с учетом зума
     if (imageInfo && imageInfo.displayWidth && imageInfo.displayHeight) {
-      // Применяем зум к размерам изображения
       scaledWidth = imageInfo.displayWidth * zoomLevel;
       scaledHeight = imageInfo.displayHeight * zoomLevel;
       x = (canvas.width - scaledWidth) / 2;
       y = (canvas.height - scaledHeight) / 2;
     } else {
-      // Стандартное масштабирование с учетом zoom
       scaledWidth = canvas.width * zoomLevel;
       scaledHeight = canvas.height * zoomLevel;
       x = (canvas.width - scaledWidth) / 2;
@@ -266,7 +495,6 @@ const MemeEditor = () => {
 
     const currentElements = memeElementsRef.current;
 
-    // Загружаем стикеры
     const stickerImages = new Map();
     for (const element of currentElements) {
       if (element.elementType === 'Sticker') {
@@ -275,7 +503,7 @@ const MemeEditor = () => {
       }
     }
 
-    // Рисуем в зависимости от выбранного слоя
+    // Рисуем элементы
     if (drawingLayer === 'bottom') {
       drawDrawingOnCanvas(ctx, drawingData, x, y, scaledWidth, scaledHeight);
       await drawElementsOnCanvas(ctx, currentElements, stickerImages, x, y, scaledWidth, scaledHeight);
@@ -284,10 +512,13 @@ const MemeEditor = () => {
       drawDrawingOnCanvas(ctx, drawingData, x, y, scaledWidth, scaledHeight);
     }
     
+    // Рисуем подсветку поверх всего
+    drawHighlightOverlay(ctx, currentElements, x, y, scaledWidth, scaledHeight);
+    
   } catch (error) {
     console.error('Error in redrawMeme:', error);
   }
-}, [selectedTemplate, zoomLevel, drawingData, drawingLayer, imageInfo]);
+}, [selectedTemplate, zoomLevel, drawingData, drawingLayer, imageInfo, drawHighlightOverlay]);
   // Загрузка изображения с кэшем
   const imageCache = new Map();
 
@@ -316,10 +547,10 @@ const MemeEditor = () => {
 
   const startDrawing = useCallback((e: any) => {
     if (!drawingMode || !canvasRef.current || !selectedTemplate) return;
-    
+
     e.preventDefault();
     setIsDrawing(true);
-    
+
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     const clientY = e.clientY ?? e.touches?.[0]?.clientY;
     const normalized = getNormalizedCoordinates(clientX, clientY);
@@ -342,22 +573,22 @@ const MemeEditor = () => {
     scaledHeight: number
   ) => {
     if (drawingData.length === 0) return;
-    
+
     ctx.save();
-    
+
     for (let i = 0; i < drawingData.length - 1; i++) {
       const point1 = drawingData[i];
       const point2 = drawingData[i + 1];
-      
+
       if (point1.color !== point2.color) continue;
-      
+
       const posX1 = x + scaledWidth * point1.x;
       const posY1 = y + scaledHeight * point1.y;
       const posX2 = x + scaledWidth * point2.x;
       const posY2 = y + scaledHeight * point2.y;
-      
+
       const brushSizePx = point1.size * Math.min(scaledWidth, scaledHeight) / 10;
-      
+
       ctx.beginPath();
       ctx.moveTo(posX1, posY1);
       ctx.lineTo(posX2, posY2);
@@ -367,7 +598,7 @@ const MemeEditor = () => {
       ctx.lineJoin = 'round';
       ctx.stroke();
     }
-    
+
     ctx.restore();
   };
 
@@ -460,12 +691,12 @@ const MemeEditor = () => {
 
   const draw = useCallback((e: any) => {
     if (!drawingMode || !isDrawing || !canvasRef.current || !selectedTemplate) return;
-    
+
     e.preventDefault();
-    
+
     const clientX = e.clientX ?? e.touches?.[0]?.clientX;
     const clientY = e.clientY ?? e.touches?.[0]?.clientY;
-    
+
     const normalized = getNormalizedCoordinates(clientX, clientY);
     if (normalized) {
       setDrawingData(prev => [...prev, {
@@ -535,66 +766,66 @@ const MemeEditor = () => {
   };
 
   const handleFileSelected = async (e: any) => {
-  const file = e.target.files[0];
-  if (!file) return;
+    const file = e.target.files[0];
+    if (!file) return;
 
-  setIsLoading(true);
-  const reader = new FileReader();
-  reader.onload = async (event: any) => {
-    try {
-      saveToHistory();
-      
-      const img = new Image();
-      img.onload = () => {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const canvasWidth = canvas.width;
-          const canvasHeight = canvas.height;
-          const imgRatio = img.width / img.height;
-          const canvasRatio = canvasWidth / canvasHeight;
-          
-          let displayWidth, displayHeight;
-          
-          switch (imageFitMode) {
-            case 'original':
-              // Оригинальный размер
-              displayWidth = canvasWidth;
-              displayHeight = canvasHeight;
-              break;
-            case 'contain':
-            default:
-              // Сохранить пропорции
-              if (imgRatio > canvasRatio) {
+    setIsLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (event: any) => {
+      try {
+        saveToHistory();
+
+        const img = new Image();
+        img.onload = () => {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            const canvasWidth = canvas.width;
+            const canvasHeight = canvas.height;
+            const imgRatio = img.width / img.height;
+            const canvasRatio = canvasWidth / canvasHeight;
+
+            let displayWidth, displayHeight;
+
+            switch (imageFitMode) {
+              case 'original':
+                // Оригинальный размер
                 displayWidth = canvasWidth;
-                displayHeight = canvasWidth / imgRatio;
-              } else {
                 displayHeight = canvasHeight;
-                displayWidth = canvasHeight * imgRatio;
-              }
-              break;
+                break;
+              case 'contain':
+              default:
+                // Сохранить пропорции
+                if (imgRatio > canvasRatio) {
+                  displayWidth = canvasWidth;
+                  displayHeight = canvasWidth / imgRatio;
+                } else {
+                  displayHeight = canvasHeight;
+                  displayWidth = canvasHeight * imgRatio;
+                }
+                break;
+            }
+
+            setImageInfo({
+              width: img.width,
+              height: img.height,
+              displayWidth,
+              displayHeight
+            });
+
+            setSelectedTemplate(event.target.result);
           }
-          
-          setImageInfo({
-            width: img.width,
-            height: img.height,
-            displayWidth,
-            displayHeight
-          });
-          
-          setSelectedTemplate(event.target.result);
-        }
-      };
-      img.src = event.target.result;
-      
-      await redrawMeme();
-    } catch (error) {
-      console.error('Error loading image:', error);
-    } finally {
-      setIsLoading(false);
-    }
+        };
+        img.src = event.target.result;
+
+        await redrawMeme();
+      } catch (error) {
+        console.error('Error loading image:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
-  reader.readAsDataURL(file);
-};
 
   const updateTextProperty = async <K extends keyof TextBlock>(
     property: K,
@@ -607,7 +838,7 @@ const MemeEditor = () => {
     setMemeElements(newElements);
     await redrawMeme();
   };
-  
+
   const toggleTextProperty = async <K extends keyof TextBlock>(
     property: K,
     value1: TextBlock[K],
@@ -951,6 +1182,115 @@ const MemeEditor = () => {
     link.click();
   };
 
+const handleDoubleClick = useCallback(async (e: React.MouseEvent<HTMLCanvasElement>) => {
+  if (drawingMode) return;
+  
+  const clientX = e.clientX;
+  const clientY = e.clientY;
+  
+  const normalized = getNormalizedCoordinates(clientX, clientY);
+  if (!normalized) return;
+  
+  const hitIndex = await hitTestWithZoom(clientX, clientY);
+  
+  if (hitIndex >= 0) {
+    const element = memeElementsRef.current[hitIndex];
+    if (element.elementType === 'Text') {
+      isTextEditConfirmed.current = false;
+      setEditingTextIndex(hitIndex);
+      setEditingTextValue(element.text);
+      setActiveBlockIndex(hitIndex);
+      
+        setTimeout(() => {
+          if (textInputRef.current) {
+            textInputRef.current.focus();
+            textInputRef.current.select();
+          }
+        }, 100);
+      
+    }
+  }
+}, [drawingMode, getNormalizedCoordinates, hitTestWithZoom]);
+
+const saveTextEdit = useCallback(async () => {
+  if (editingTextIndex === null || isTextEditConfirmed.current) return;
+  
+  isTextEditConfirmed.current = true;
+  
+  const element = memeElements[editingTextIndex];
+  if (element.elementType === 'Text' && element.text !== editingTextValue) {
+    saveToHistory();
+    const newElements = [...memeElements];
+    newElements[editingTextIndex].text = editingTextValue;
+    setMemeElements(newElements);
+    await redrawMeme();
+  }
+  
+  setEditingTextIndex(null);
+  setEditingTextValue('');
+}, [editingTextIndex, editingTextValue, memeElements, saveToHistory, redrawMeme]);
+
+const handleTextInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  setEditingTextValue(e.target.value);
+};
+
+const handleTextInputKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    await saveTextEdit();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    isTextEditConfirmed.current = true;
+    setEditingTextIndex(null);
+    setEditingTextValue('');
+  }
+};
+
+// Обработчик потери фокуса - сохраняет текст
+const handleTextInputBlur = async () => {
+  // Небольшая задержка чтобы не конфликтовать с другими событиями
+  setTimeout(async () => {
+    if (editingTextIndex !== null && !isTextEditConfirmed.current) {
+      await saveTextEdit();
+    }
+  }, 50);
+};
+
+// Обработчик касания вне инпута (для мобильных)
+const handleDocumentTouch = useCallback(async (e: TouchEvent) => {
+  if (editingTextIndex === null) return;
+  
+  const target = e.target as HTMLElement;
+  // Если клик не по инпуту и не по канвасу
+  if (textInputRef.current && !textInputRef.current.contains(target)) {
+    await saveTextEdit();
+  }
+}, [editingTextIndex, saveTextEdit]);
+
+// Обработчик клика вне инпута (для десктопа)
+const handleDocumentClick = useCallback(async (e: MouseEvent) => {
+  if (editingTextIndex === null) return;
+  
+  const target = e.target as HTMLElement;
+  // Если клик не по инпуту и не по канвасу
+  if (textInputRef.current && !textInputRef.current.contains(target)) {
+    await saveTextEdit();
+  }
+}, [editingTextIndex, saveTextEdit]);
+
+
+useEffect(() => {
+  if (editingTextIndex !== null) {
+    document.addEventListener('click', handleDocumentClick);
+    document.addEventListener('touchstart', handleDocumentTouch);
+    
+    return () => {
+      document.removeEventListener('click', handleDocumentClick);
+      document.removeEventListener('touchstart', handleDocumentTouch);
+    };
+  }
+}, [editingTextIndex, handleDocumentClick, handleDocumentTouch]);
+
   useEffect(() => {
     const preventSelect = (e: any) => {
       if (draggingRef.current.isDragging) {
@@ -970,6 +1310,20 @@ const MemeEditor = () => {
   // Клавиатурные сокращения
   useEffect(() => {
     const handleKeyDown = async (e: any) => {
+      if (editingTextIndex !== null) {
+        // Но обрабатываем Escape и Enter
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          isTextEditConfirmed.current = true;
+          setEditingTextIndex(null);
+          setEditingTextValue('');
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          await saveTextEdit();
+        }
+        return;
+      }
+
       const ctrl = e.ctrlKey;
       const shift = e.shiftKey;
 
@@ -1014,7 +1368,7 @@ const MemeEditor = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, duplicateTextBlock, removeTextBlock, bringToFront, sendToBack, moveElementUp, moveElementDown, memeElements.length, addTextBlock]);
+  }, [editingTextIndex, saveTextEdit, undo, redo, duplicateTextBlock, removeTextBlock, bringToFront, sendToBack, moveElementUp, moveElementDown, memeElements.length, addTextBlock]);
 
   // Инициализация
   useEffect(() => {
@@ -1063,12 +1417,48 @@ const MemeEditor = () => {
               onTouchStart={drawingMode ? startDrawing : startDrag}
               onTouchMove={drawingMode ? draw : dragElement}
               onTouchEnd={drawingMode ? stopDrawing : endDrag}
+              onDoubleClick={handleDoubleClick}
               onWheel={(e) => {
                 e.preventDefault();
                 if (e.deltaY < 0) zoomIn();
                 else zoomOut();
               }}
             />
+
+            {/* Инпут для редактирования текста */}
+            {editingTextIndex !== null && memeElements[editingTextIndex] && (
+              <input
+                ref={textInputRef}
+                type="text"
+                className="text-edit-input"
+                value={editingTextValue}
+                onChange={handleTextInputChange}
+                onKeyDown={handleTextInputKeyDown}
+                onBlur={handleTextInputBlur}
+                style={{
+                  position: 'absolute',
+                  left: `${memeElements[editingTextIndex].x * 100}%`,
+                  top: `${memeElements[editingTextIndex].y * 100}%`,
+                  transform: 'translate(-50%, -50%)',
+                  fontSize: `${Math.min(memeElements[editingTextIndex].fontSize || 24, 40)}px`,
+                  fontFamily: memeElements[editingTextIndex].fontFamily || 'Impact',
+                  fontWeight: memeElements[editingTextIndex].fontWeight || 'bold',
+                  color: memeElements[editingTextIndex].color || '#ffffff',
+                  backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                  border: '3px solid #667eea',
+                  borderRadius: '8px',
+                  padding: '8px 16px',
+                  minWidth: '100px',
+                  maxWidth: '85%',
+                  outline: 'none',
+                  zIndex: 1000,
+                  textAlign: 'center',
+                  textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+                  boxShadow: '0 0 30px rgba(102, 126, 234, 0.4)',
+                  pointerEvents: 'auto',
+                }}
+              />
+)}
 
             {/* Плавающие инструменты */}
             <div className="floating-tools">
@@ -1087,9 +1477,9 @@ const MemeEditor = () => {
               <div className="tool-divider" />
 
               <div className="tool-group">
-                <button 
-                  className={`tool-btn ${showGrid ? 'active' : ''}`} 
-                  onClick={() => setShowGrid(!showGrid)} 
+                <button
+                  className={`tool-btn ${showGrid ? 'active' : ''}`}
+                  onClick={() => setShowGrid(!showGrid)}
                   title="Сетка (Ctrl+G)"
                 >
                   <GridIcon />
@@ -1100,6 +1490,22 @@ const MemeEditor = () => {
                   title="Режим рисования"
                 >
                   <DrawIcon />
+                </button>
+                <button
+                  className={`tool-btn ${highlightMode ? 'active' : ''}`}
+                  onClick={() => setHighlightMode(!highlightMode)}
+                  title="Подсветка блоков (Ctrl+H)"
+                >
+                  <HighlightIcon />
+                </button>
+                {/* Кнопка копирования блока */}
+                <button
+                  className="tool-btn"
+                  onClick={duplicateTextBlock}
+                  title="Копировать блок (Ctrl+D)"
+                  disabled={!currentBlock}
+                >
+                  <CopyIcon />
                 </button>
                 <button className="tool-btn" onClick={undo} title="Отменить (Ctrl+Z)">
                   <UndoIcon />
@@ -1146,25 +1552,25 @@ const MemeEditor = () => {
           <div className="sidebar-content">
             {/* Вкладки для лучшей организации */}
             <div className="tabs">
-              <button 
+              <button
                 className={`tab ${activeTab === 'elements' ? 'active' : ''}`}
                 onClick={() => setActiveTab('elements')}
               >
                 📦 Элементы
               </button>
-              <button 
+              <button
                 className={`tab ${activeTab === 'filters' ? 'active' : ''}`}
                 onClick={() => setActiveTab('filters')}
               >
                 ✨ Эффекты
               </button>
-              <button 
+              <button
                 className={`tab ${activeTab === 'draw' ? 'active' : ''}`}
                 onClick={() => setActiveTab('draw')}
               >
                 ✏️ Рисование
               </button>
-              <button 
+              <button
                 className={`tab ${activeTab === 'stickers' ? 'active' : ''}`}
                 onClick={() => setActiveTab('stickers')}
               >
@@ -1193,7 +1599,7 @@ const MemeEditor = () => {
                   </div>
                   <div className="block-indicator">
                     {memeElements.map((el, idx) => (
-                      <div 
+                      <div
                         key={idx}
                         className={`block-dot ${idx === activeBlockIndex ? 'active' : ''}`}
                         onClick={() => setActiveBlockIndex(idx)}
@@ -1207,15 +1613,15 @@ const MemeEditor = () => {
                 {currentBlock && (
                   <div className="control-card">
                     <h3>Свойства</h3>
-                    
+
                     {currentBlock.elementType === 'Text' && (
                       <>
                         <div className="form-group">
                           <label>Текст</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             className="form-control"
-                            value={currentBlock.text} 
+                            value={currentBlock.text}
                             onChange={changeText}
                             maxLength={200}
                           />
@@ -1234,12 +1640,12 @@ const MemeEditor = () => {
 
                           <div className="form-group">
                             <label>Размер</label>
-                            <input 
-                              type="range" 
+                            <input
+                              type="range"
                               className="form-range"
-                              min="16" 
-                              max="80" 
-                              value={currentBlock.fontSize} 
+                              min="16"
+                              max="80"
+                              value={currentBlock.fontSize}
                               onChange={changeFontSize}
                             />
                             <span className="range-value">{currentBlock.fontSize}px</span>
@@ -1247,19 +1653,19 @@ const MemeEditor = () => {
                         </div>
 
                         <div className="button-group">
-                          <button 
+                          <button
                             className={`style-btn ${currentBlock.fontWeight === 'bold' ? 'active' : ''}`}
                             onClick={toggleBold}
                           >
                             <b>Ж</b>
                           </button>
-                          <button 
+                          <button
                             className={`style-btn ${currentBlock.fontStyle === 'italic' ? 'active' : ''}`}
                             onClick={toggleItalic}
                           >
                             <i>К</i>
                           </button>
-                          <button 
+                          <button
                             className={`style-btn ${currentBlock.textDecoration === 'underline' ? 'active' : ''}`}
                             onClick={toggleUnderline}
                           >
@@ -1300,10 +1706,10 @@ const MemeEditor = () => {
                         {/* ГРАДИЕНТ - с вашими функциями */}
                         <div className="form-group">
                           <label className="checkbox">
-                            <input 
-                              type="checkbox" 
-                              checked={currentBlock.useGradient} 
-                              onChange={toggleUseGradient} 
+                            <input
+                              type="checkbox"
+                              checked={currentBlock.useGradient}
+                              onChange={toggleUseGradient}
                             />
                             <span>🌈 Градиент</span>
                           </label>
@@ -1314,20 +1720,20 @@ const MemeEditor = () => {
                             <div className="form-row">
                               <div className="form-group">
                                 <label>Градиент от</label>
-                                <input 
-                                  type="color" 
-                                  className="form-color" 
-                                  value={currentBlock.gradientStartColor} 
-                                  onChange={changeGradientStartColor} 
+                                <input
+                                  type="color"
+                                  className="form-color"
+                                  value={currentBlock.gradientStartColor}
+                                  onChange={changeGradientStartColor}
                                 />
                               </div>
                               <div className="form-group">
                                 <label>Градиент до</label>
-                                <input 
-                                  type="color" 
-                                  className="form-color" 
-                                  value={currentBlock.gradientEndColor} 
-                                  onChange={changeGradientEndColor} 
+                                <input
+                                  type="color"
+                                  className="form-color"
+                                  value={currentBlock.gradientEndColor}
+                                  onChange={changeGradientEndColor}
                                 />
                               </div>
                             </div>
@@ -1340,22 +1746,22 @@ const MemeEditor = () => {
                       <>
                         <div className="form-group">
                           <label>Размер</label>
-                          <input 
-                            type="range" 
-                            min="50" 
-                            max="300" 
-                            value={currentBlock.width} 
+                          <input
+                            type="range"
+                            min="50"
+                            max="300"
+                            value={currentBlock.width}
                             onChange={changeStickerSize}
                           />
                         </div>
 
                         <div className="form-group">
                           <label>Прозрачность: {Math.round(currentBlock.opacity * 100)}%</label>
-                          <input 
-                            type="range" 
-                            min="20" 
-                            max="100" 
-                            value={currentBlock.opacity * 100} 
+                          <input
+                            type="range"
+                            min="20"
+                            max="100"
+                            value={currentBlock.opacity * 100}
                             onChange={changeStickerOpacity}
                           />
                         </div>
@@ -1364,11 +1770,11 @@ const MemeEditor = () => {
 
                     <div className="form-group">
                       <label>Поворот: {currentBlock.rotation || 0}°</label>
-                      <input 
-                        type="range" 
-                        min="-180" 
-                        max="180" 
-                        value={currentBlock.rotation || 0} 
+                      <input
+                        type="range"
+                        min="-180"
+                        max="180"
+                        value={currentBlock.rotation || 0}
                         onChange={changeRotation}
                       />
                     </div>
@@ -1412,19 +1818,19 @@ const MemeEditor = () => {
                 <div className="control-card">
                   <h3>Быстрые эффекты</h3>
                   <div className="filter-grid">
-                    <button 
+                    <button
                       className={`filter-btn ${imageFilters.grayscale ? 'active' : ''}`}
                       onClick={toggleGrayscale}
                     >
                       ⚫ Ч/Б
                     </button>
-                    <button 
+                    <button
                       className={`filter-btn ${imageFilters.sepia ? 'active' : ''}`}
                       onClick={toggleSepia}
                     >
                       🔶 Сепия
                     </button>
-                    <button 
+                    <button
                       className={`filter-btn ${imageFilters.invert ? 'active' : ''}`}
                       onClick={toggleInvert}
                     >
@@ -1438,48 +1844,48 @@ const MemeEditor = () => {
 
                 <div className="control-card">
                   <h3>Настройки</h3>
-                  
+
                   <div className="form-group">
                     <label>Яркость: {imageFilters.brightness}%</label>
-                    <input 
-                      type="range" 
-                      min="50" 
-                      max="150" 
-                      value={imageFilters.brightness} 
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={imageFilters.brightness}
                       onChange={changeBrightness}
                     />
                   </div>
 
                   <div className="form-group">
                     <label>Контраст: {imageFilters.contrast}%</label>
-                    <input 
-                      type="range" 
-                      min="50" 
-                      max="150" 
-                      value={imageFilters.contrast} 
+                    <input
+                      type="range"
+                      min="50"
+                      max="150"
+                      value={imageFilters.contrast}
                       onChange={changeContrast}
                     />
                   </div>
 
                   <div className="form-group">
                     <label>Насыщенность: {imageFilters.saturate}%</label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="200" 
-                      value={imageFilters.saturate} 
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      value={imageFilters.saturate}
                       onChange={changeSaturate}
                     />
                   </div>
 
                   <div className="form-group">
                     <label>Размытие: {imageFilters.blur}px</label>
-                    <input 
-                      type="range" 
-                      min="0" 
-                      max="10" 
-                      step="0.5" 
-                      value={imageFilters.blur} 
+                    <input
+                      type="range"
+                      min="0"
+                      max="10"
+                      step="0.5"
+                      value={imageFilters.blur}
                       onChange={changeBlur}
                     />
                   </div>
@@ -1491,7 +1897,7 @@ const MemeEditor = () => {
             {activeTab === 'draw' && (
               <div className="tab-content">
                 <div className="control-card">
-                  <button 
+                  <button
                     className={`btn-draw-mode ${drawingMode ? 'active' : ''}`}
                     onClick={toggleDrawingMode}
                   >
@@ -1502,21 +1908,21 @@ const MemeEditor = () => {
                     <>
                       <div className="form-group">
                         <label>Размер кисти: {brushSize}px</label>
-                        <input 
-                          type="range" 
-                          min="2" 
-                          max="50" 
-                          value={brushSize} 
+                        <input
+                          type="range"
+                          min="2"
+                          max="50"
+                          value={brushSize}
                           onChange={(e) => setBrushSize(parseInt(e.target.value))}
                         />
                       </div>
 
                       <div className="form-group">
                         <label>Цвет кисти</label>
-                        <input 
-                          type="color" 
-                          className="form-color" 
-                          value={brushColor} 
+                        <input
+                          type="color"
+                          className="form-color"
+                          value={brushColor}
                           onChange={(e) => setBrushColor(e.target.value)}
                         />
                       </div>
@@ -1524,13 +1930,13 @@ const MemeEditor = () => {
                       <div className="form-group">
                         <label>Слой</label>
                         <div className="button-group">
-                          <button 
+                          <button
                             className={`layer-btn ${drawingLayer === 'bottom' ? 'active' : ''}`}
                             onClick={() => setDrawingLayer('bottom')}
                           >
                             Под элементами
                           </button>
-                          <button 
+                          <button
                             className={`layer-btn ${drawingLayer === 'top' ? 'active' : ''}`}
                             onClick={() => setDrawingLayer('top')}
                           >
@@ -1598,7 +2004,7 @@ const MemeEditor = () => {
 };
 
 // Иконки (используем простые SVG для кросс-платформенности)
-const ZoomInIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>;
+const ZoomInIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" /></svg>;
 const ZoomOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></svg>;
 const ResetZoomIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 3v6h6" /></svg>;
 const GridIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="3" x2="21" y2="3" /><line x1="3" y1="21" x2="21" y2="21" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="12" y1="3" x2="12" y2="21" /></svg>;
@@ -1614,6 +2020,19 @@ const DrawIcon = () => (
     <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
     <path d="M2 2l7.586 7.586" />
     <circle cx="11" cy="11" r="2" />
+  </svg>
+);
+const HighlightIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor"/>
+    <path d="M7 7h10v10H7z" fill="currentColor" opacity="0.3"/>
+    <path d="M12 7v10M7 12h10" stroke="currentColor" strokeWidth="1.5"/>
+  </svg>
+);
+const CopyIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor"/>
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor"/>
   </svg>
 );
 // Компоненты
