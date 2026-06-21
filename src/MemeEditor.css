@@ -1,4 +1,4 @@
-/* MemeEditor.css - Кросс-платформенные стили */
+/* MemeEditor.css - Кросс-платформенные стили с меню снизу */
 
 /* CSS Variables для легкой кастомизации */
 :root {
@@ -14,6 +14,7 @@
   --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.2);
   --radius: 12px;
   --radius-sm: 6px;
+  --sidebar-height: 65vh;
 }
 
 /* Базовые стили */
@@ -83,8 +84,8 @@
   overflow: hidden;
   box-shadow: var(--shadow-lg);
   aspect-ratio: 4 / 3;
-   touch-action: pan-y pinch-zoom; /* Разрешаем вертикальную прокрутку только за пределами канваса */
-  overflow: hidden; /* Предотвращает прокрутку контейнера */
+  touch-action: pan-y pinch-zoom;
+  overflow: hidden;
 }
 
 .meme-canvas {
@@ -93,8 +94,8 @@
   object-fit: contain;
   cursor: grab;
   display: block;
-   touch-action: none; /* Отключает стандартную прокрутку и зум на канвасе */
-  -webkit-tap-highlight-color: transparent; /* Убирает серый фон при тапе */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .meme-canvas:active {
@@ -168,34 +169,7 @@
   font-family: monospace;
 }
 
-/* Быстрые действия */
-.quick-actions {
-  display: none;
-  gap: 12px;
-  margin-top: 12px;
-  padding: 12px;
-  background: white;
-  border-radius: var(--radius);
-}
-
-.quick-action-btn {
-  flex: 1;
-  padding: 10px;
-  background: #f0f0f0;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.quick-action-btn:active {
-  background: var(--primary);
-  color: white;
-  transform: scale(0.98);
-}
-
-/* Сайдбар */
+/* Сайдбар - на десктопе справа, на мобильных снизу */
 .sidebar {
   width: 380px;
   background: white;
@@ -204,7 +178,7 @@
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  transition: transform 0.3s ease;
+  transition: transform 0.3s ease, opacity 0.3s ease;
 }
 
 .sidebar-header {
@@ -708,7 +682,8 @@
   font-size: 14px;
 }
 
-/* Адаптивность */
+/* ===== АДАПТИВНОСТЬ ===== */
+
 @media (max-width: 1024px) {
   .editor-layout {
     padding: 16px;
@@ -716,13 +691,14 @@
 }
 
 @media (max-width: 768px) {
-    .meme-preview {
-    touch-action: pan-y pinch-zoom; /* На мобильных разрешаем только вертикальную прокрутку и зум */
+  .meme-preview {
+    touch-action: pan-y pinch-zoom;
   }
   
   .meme-canvas {
-    touch-action: none; /* На самом канвасе полностью отключаем стандартные жесты */
+    touch-action: none;
   }
+
   .mobile-toolbar {
     display: flex;
   }
@@ -750,20 +726,41 @@
     display: flex;
   }
 
+  /* Меню выдвигается СНИЗУ! */
   .sidebar {
     position: fixed;
-    top: 0;
-    right: 0;
     bottom: 0;
-    width: 85%;
-    max-width: 350px;
-    transform: translateX(100%);
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    height: var(--sidebar-height);
+    border-radius: 16px 16px 0 0;
+    transform: translateY(100%);
     z-index: 1000;
-    border-radius: 16px 0 0 16px;
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.3);
   }
 
   .sidebar.open {
-    transform: translateX(0);
+    transform: translateY(0);
+  }
+
+  /* Затемнение фона при открытом меню */
+  .sidebar.open::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: -1;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   .close-sidebar {
@@ -771,7 +768,7 @@
   }
 
   .sidebar-content {
-    max-height: calc(100vh - 60px);
+    max-height: calc(var(--sidebar-height) - 60px);
   }
 
   .stickers-grid {
@@ -808,6 +805,11 @@
   .stickers-grid {
     grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
     gap: 8px;
+  }
+
+  /* На маленьких экранах меню занимает больше места */
+  :root {
+    --sidebar-height: 50vh;
   }
 }
 

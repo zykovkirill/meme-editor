@@ -5,7 +5,6 @@ import { ImageFilters } from './models/ImageFilters';
 import { HistoryState } from './models/HistoryState';
 import { Sticker } from './models/Sticker';
 
-
 const MemeEditor = () => {
   // Состояния
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -29,7 +28,7 @@ const MemeEditor = () => {
   const [activeBlockIndex, setActiveBlockIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('elements'); // 'elements', 'filters', 'draw', 'sticker
+  const [activeTab, setActiveTab] = useState('elements'); // 'elements', 'filters', 'draw', 'sticker'
   const [zoomLevel, setZoomLevel] = useState(1);
   const [undoStack, setUndoStack] = useState<HistoryState[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryState[]>([]);
@@ -45,12 +44,22 @@ const MemeEditor = () => {
   const memeElementsRef = useRef(memeElements);
   const drawingDataRef = useRef(drawingData);
   const pageSize = 12;
+  const [imageInfo, setImageInfo] = useState<{
+    width: number;
+    height: number;
+    displayWidth?: number;
+    displayHeight?: number;
+  } | null>(null);
+  const [imageFitMode, setImageFitMode] = useState<'contain' | 'original'>('contain');
+  
   useEffect(() => {
     memeElementsRef.current = memeElements;
   }, [memeElements]);
-    useEffect(() => {
+  
+  useEffect(() => {
     drawingDataRef.current = drawingData;
   }, [drawingData]);
+  
   // Вычисляемые значения
   const currentBlock = memeElements[activeBlockIndex];
 
@@ -64,18 +73,28 @@ const MemeEditor = () => {
     setMobileMenuOpen(!mobileMenuOpen);
   };
 
-  const getImagePosition = useCallback(() => {
-    if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
+ const getImagePosition = useCallback(() => {
+  if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
 
-    const canvas = canvasRef.current;
-    const scaledWidth = canvas.width * zoomLevel;
-    const scaledHeight = canvas.height * zoomLevel;
-    const x = (canvas.width - scaledWidth) / 2;
-    const y = (canvas.height - scaledHeight) / 2;
+  const canvas = canvasRef.current;
+  
+  if (imageInfo && imageInfo.displayWidth && imageInfo.displayHeight) {
+    // Используем сохраненные размеры изображения с учетом зума
+    const width = imageInfo.displayWidth * zoomLevel;
+    const height = imageInfo.displayHeight * zoomLevel;
+    const x = (canvas.width - width) / 2;
+    const y = (canvas.height - height) / 2;
+    return { x, y, width, height };
+  }
 
-    return { x, y, width: scaledWidth, height: scaledHeight };
-  }, [zoomLevel]);
+  // Fallback - используем zoom
+  const scaledWidth = canvas.width * zoomLevel;
+  const scaledHeight = canvas.height * zoomLevel;
+  const x = (canvas.width - scaledWidth) / 2;
+  const y = (canvas.height - scaledHeight) / 2;
 
+  return { x, y, width: scaledWidth, height: scaledHeight };
+}, [zoomLevel, imageInfo]);
   // Функция для преобразования координат мыши в нормализованные (с учетом zoom)
   const getNormalizedCoordinates = useCallback((clientX: any, clientY: any) => {
     if (!canvasRef.current) return null;
@@ -104,9 +123,9 @@ const MemeEditor = () => {
 
   // Функции истории
   const saveToHistory = useCallback(() => {
-  setUndoStack(prev => [...prev, new HistoryState(memeElements, imageFilters, drawingData, drawingLayer)]);
-  setRedoStack([]);
-}, [memeElements, imageFilters, drawingData, drawingLayer]);
+    setUndoStack(prev => [...prev, new HistoryState(memeElements, imageFilters, drawingData, drawingLayer)]);
+    setRedoStack([]);
+  }, [memeElements, imageFilters, drawingData, drawingLayer]);
 
   const undo = useCallback(async () => {
     if (undoStack.length === 0) return;
@@ -163,57 +182,57 @@ const MemeEditor = () => {
   }, [redoStack, saveToHistory]);
 
   const redrawDuringDrag = useCallback(async (draggedElementId: any, newX: number, newY: number) => {
-  if (!selectedTemplate || !canvasRef.current) return;
+    if (!selectedTemplate || !canvasRef.current) return;
 
-  const canvas = canvasRef.current;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  try {
-    const bgImage = await loadImageWithCache(selectedTemplate);
+    try {
+      const bgImage = await loadImageWithCache(selectedTemplate);
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const imgPos = getImagePosition();
+      const imgPos = getImagePosition();
 
-    ctx.drawImage(bgImage, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
-    ctx.filter = 'none';
+      ctx.drawImage(bgImage, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+      ctx.filter = 'none';
 
-    const currentElements = memeElementsRef.current;
+      const currentElements = memeElementsRef.current;
 
-    // Загружаем стикеры
-    const stickerImages = new Map();
-    for (const element of currentElements) {
-      if (element.elementType === 'Sticker') {
-        const img = await loadImageWithCache(element.url);
-        stickerImages.set(element.id, img);
+      // Загружаем стикеры
+      const stickerImages = new Map();
+      for (const element of currentElements) {
+        if (element.elementType === 'Sticker') {
+          const img = await loadImageWithCache(element.url);
+          stickerImages.set(element.id, img);
+        }
       }
-    }
 
-    // Рисуем в зависимости от выбранного слоя
-    if (drawingLayer === 'bottom') {
-      drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
-      await drawElementsOnCanvas(
-        ctx, currentElements, stickerImages, 
-        imgPos.x, imgPos.y, imgPos.width, imgPos.height,
-        draggedElementId, newX, newY, true
-      );
-    } else {
-      await drawElementsOnCanvas(
-        ctx, currentElements, stickerImages, 
-        imgPos.x, imgPos.y, imgPos.width, imgPos.height,
-        draggedElementId, newX, newY, true
-      );
-      drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+      // Рисуем в зависимости от выбранного слоя
+      if (drawingLayer === 'bottom') {
+        drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+        await drawElementsOnCanvas(
+          ctx, currentElements, stickerImages, 
+          imgPos.x, imgPos.y, imgPos.width, imgPos.height,
+          draggedElementId, newX, newY, true
+        );
+      } else {
+        await drawElementsOnCanvas(
+          ctx, currentElements, stickerImages, 
+          imgPos.x, imgPos.y, imgPos.width, imgPos.height,
+          draggedElementId, newX, newY, true
+        );
+        drawDrawingOnCanvas(ctx, drawingData, imgPos.x, imgPos.y, imgPos.width, imgPos.height);
+      }
+      
+    } catch (error) {
+      console.error('Error during drag redraw:', error);
     }
-    
-  } catch (error) {
-    console.error('Error during drag redraw:', error);
-  }
-}, [selectedTemplate, getImagePosition, drawingData, drawingLayer]);
+  }, [selectedTemplate, getImagePosition, drawingData, drawingLayer]);
 
   // Функции отрисовки
-  const redrawMeme = useCallback(async () => {
+ const redrawMeme = useCallback(async () => {
   if (!selectedTemplate || !canvasRef.current) return;
 
   const canvas = canvasRef.current;
@@ -225,10 +244,22 @@ const MemeEditor = () => {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const scaledWidth = canvas.width * zoomLevel;
-    const scaledHeight = canvas.height * zoomLevel;
-    const x = (canvas.width - scaledWidth) / 2;
-    const y = (canvas.height - scaledHeight) / 2;
+    let x, y, scaledWidth, scaledHeight;
+    
+    // Если есть информация об изображении, используем сохраненные размеры с учетом зума
+    if (imageInfo && imageInfo.displayWidth && imageInfo.displayHeight) {
+      // Применяем зум к размерам изображения
+      scaledWidth = imageInfo.displayWidth * zoomLevel;
+      scaledHeight = imageInfo.displayHeight * zoomLevel;
+      x = (canvas.width - scaledWidth) / 2;
+      y = (canvas.height - scaledHeight) / 2;
+    } else {
+      // Стандартное масштабирование с учетом zoom
+      scaledWidth = canvas.width * zoomLevel;
+      scaledHeight = canvas.height * zoomLevel;
+      x = (canvas.width - scaledWidth) / 2;
+      y = (canvas.height - scaledHeight) / 2;
+    }
 
     ctx.drawImage(bgImage, x, y, scaledWidth, scaledHeight);
     ctx.filter = 'none';
@@ -256,8 +287,7 @@ const MemeEditor = () => {
   } catch (error) {
     console.error('Error in redrawMeme:', error);
   }
-}, [selectedTemplate, zoomLevel, drawingData, drawingLayer]);
-
+}, [selectedTemplate, zoomLevel, drawingData, drawingLayer, imageInfo]);
   // Загрузка изображения с кэшем
   const imageCache = new Map();
 
@@ -285,168 +315,168 @@ const MemeEditor = () => {
   };
 
   const startDrawing = useCallback((e: any) => {
-  if (!drawingMode || !canvasRef.current || !selectedTemplate) return;
-  
-  e.preventDefault();
-  setIsDrawing(true);
-  
-  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
-  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
-  const normalized = getNormalizedCoordinates(clientX, clientY);
-  if (normalized) {
-    setDrawingData(prev => [...prev, {
-      x: normalized.x,
-      y: normalized.y,
-      size: brushSize / 100,
-      color: brushColor
-    }]);
-  }
-}, [drawingMode, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor]);
-
-const drawDrawingOnCanvas = (
-  ctx: CanvasRenderingContext2D,
-  drawingData: any[],
-  x: number,
-  y: number,
-  scaledWidth: number,
-  scaledHeight: number
-) => {
-  if (drawingData.length === 0) return;
-  
-  ctx.save();
-  
-  for (let i = 0; i < drawingData.length - 1; i++) {
-    const point1 = drawingData[i];
-    const point2 = drawingData[i + 1];
+    if (!drawingMode || !canvasRef.current || !selectedTemplate) return;
     
-    if (point1.color !== point2.color) continue;
+    e.preventDefault();
+    setIsDrawing(true);
     
-    const posX1 = x + scaledWidth * point1.x;
-    const posY1 = y + scaledHeight * point1.y;
-    const posX2 = x + scaledWidth * point2.x;
-    const posY2 = y + scaledHeight * point2.y;
-    
-    const brushSizePx = point1.size * Math.min(scaledWidth, scaledHeight) / 10;
-    
-    ctx.beginPath();
-    ctx.moveTo(posX1, posY1);
-    ctx.lineTo(posX2, posY2);
-    ctx.strokeStyle = point1.color;
-    ctx.lineWidth = brushSizePx;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.stroke();
-  }
-  
-  ctx.restore();
-};
-
-const drawElementsOnCanvas = async (
-  ctx: CanvasRenderingContext2D,
-  elements: any[],
-  stickerImages: Map<string, HTMLImageElement>,
-  x: number,
-  y: number,
-  scaledWidth: number,
-  scaledHeight: number,
-  draggedElementId: string | null = null,
-  dragNewX: number | null = null,
-  dragNewY: number | null = null,
-  isDragging: boolean = false
-) => {
-  for (const element of elements) {
-    let posX, posY;
-
-    if (element.id === draggedElementId && isDragging && dragNewX !== null && dragNewY !== null) {
-      posX = x + scaledWidth * dragNewX;
-      posY = y + scaledHeight * dragNewY;
-    } else {
-      posX = x + scaledWidth * element.x;
-      posY = y + scaledHeight * element.y;
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+    const normalized = getNormalizedCoordinates(clientX, clientY);
+    if (normalized) {
+      setDrawingData(prev => [...prev, {
+        x: normalized.x,
+        y: normalized.y,
+        size: brushSize / 100,
+        color: brushColor
+      }]);
     }
+  }, [drawingMode, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor]);
 
-    if (element.elementType === 'Sticker') {
-      const stickerImg = stickerImages.get(element.id);
-      if (!stickerImg) continue;
+  const drawDrawingOnCanvas = (
+    ctx: CanvasRenderingContext2D,
+    drawingData: any[],
+    x: number,
+    y: number,
+    scaledWidth: number,
+    scaledHeight: number
+  ) => {
+    if (drawingData.length === 0) return;
+    
+    ctx.save();
+    
+    for (let i = 0; i < drawingData.length - 1; i++) {
+      const point1 = drawingData[i];
+      const point2 = drawingData[i + 1];
+      
+      if (point1.color !== point2.color) continue;
+      
+      const posX1 = x + scaledWidth * point1.x;
+      const posY1 = y + scaledHeight * point1.y;
+      const posX2 = x + scaledWidth * point2.x;
+      const posY2 = y + scaledHeight * point2.y;
+      
+      const brushSizePx = point1.size * Math.min(scaledWidth, scaledHeight) / 10;
+      
+      ctx.beginPath();
+      ctx.moveTo(posX1, posY1);
+      ctx.lineTo(posX2, posY2);
+      ctx.strokeStyle = point1.color;
+      ctx.lineWidth = brushSizePx;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    }
+    
+    ctx.restore();
+  };
 
-      ctx.save();
-      ctx.translate(posX, posY);
-      ctx.rotate(element.rotation * Math.PI / 180);
-      ctx.globalAlpha = element.opacity;
+  const drawElementsOnCanvas = async (
+    ctx: CanvasRenderingContext2D,
+    elements: any[],
+    stickerImages: Map<string, HTMLImageElement>,
+    x: number,
+    y: number,
+    scaledWidth: number,
+    scaledHeight: number,
+    draggedElementId: string | null = null,
+    dragNewX: number | null = null,
+    dragNewY: number | null = null,
+    isDragging: boolean = false
+  ) => {
+    for (const element of elements) {
+      let posX, posY;
 
-      const stickerWidth = element.width;
-      const stickerHeight = element.height;
-      ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
-      ctx.restore();
-    } else if (element.elementType === 'Text') {
-      ctx.save();
-      ctx.translate(posX, posY);
-      ctx.rotate(element.rotation * Math.PI / 180);
-      ctx.textAlign = element.textAlign;
-
-      const fontWeight = element.fontWeight;
-      const fontStyle = element.fontStyle;
-      const fontFamily = element.fontFamily;
-      ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
-      ctx.textBaseline = 'middle';
-      ctx.lineWidth = 3;
-
-      if (element.showShadow) {
-        ctx.fillStyle = element.shadowColor;
-        ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
-      }
-
-      ctx.strokeStyle = element.strokeColor;
-      ctx.strokeText(element.text, 0, 0);
-
-      if (element.useGradient) {
-        const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
-        gradient.addColorStop(0, element.gradientStartColor);
-        gradient.addColorStop(1, element.gradientEndColor);
-        ctx.fillStyle = gradient;
+      if (element.id === draggedElementId && isDragging && dragNewX !== null && dragNewY !== null) {
+        posX = x + scaledWidth * dragNewX;
+        posY = y + scaledHeight * dragNewY;
       } else {
-        ctx.fillStyle = element.color;
+        posX = x + scaledWidth * element.x;
+        posY = y + scaledHeight * element.y;
       }
 
-      ctx.fillText(element.text, 0, 0);
+      if (element.elementType === 'Sticker') {
+        const stickerImg = stickerImages.get(element.id);
+        if (!stickerImg) continue;
 
-      if (element.textDecoration === 'underline') {
-        const metrics = ctx.measureText(element.text);
-        const textWidth = metrics.width;
-        const underlineY = element.fontSize / 2 + 3;
+        ctx.save();
+        ctx.translate(posX, posY);
+        ctx.rotate(element.rotation * Math.PI / 180);
+        ctx.globalAlpha = element.opacity;
 
-        ctx.beginPath();
-        ctx.strokeStyle = element.color;
-        ctx.lineWidth = 2;
-        ctx.moveTo(-textWidth / 2, underlineY);
-        ctx.lineTo(textWidth / 2, underlineY);
-        ctx.stroke();
+        const stickerWidth = element.width;
+        const stickerHeight = element.height;
+        ctx.drawImage(stickerImg, -stickerWidth / 2, -stickerHeight / 2, stickerWidth, stickerHeight);
+        ctx.restore();
+      } else if (element.elementType === 'Text') {
+        ctx.save();
+        ctx.translate(posX, posY);
+        ctx.rotate(element.rotation * Math.PI / 180);
+        ctx.textAlign = element.textAlign;
+
+        const fontWeight = element.fontWeight;
+        const fontStyle = element.fontStyle;
+        const fontFamily = element.fontFamily;
+        ctx.font = `${fontStyle} ${fontWeight} ${element.fontSize}px ${fontFamily}`;
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = 3;
+
+        if (element.showShadow) {
+          ctx.fillStyle = element.shadowColor;
+          ctx.fillText(element.text, element.shadowOffset, element.shadowOffset);
+        }
+
+        ctx.strokeStyle = element.strokeColor;
+        ctx.strokeText(element.text, 0, 0);
+
+        if (element.useGradient) {
+          const gradient = ctx.createLinearGradient(-100, 0, 100, 0);
+          gradient.addColorStop(0, element.gradientStartColor);
+          gradient.addColorStop(1, element.gradientEndColor);
+          ctx.fillStyle = gradient;
+        } else {
+          ctx.fillStyle = element.color;
+        }
+
+        ctx.fillText(element.text, 0, 0);
+
+        if (element.textDecoration === 'underline') {
+          const metrics = ctx.measureText(element.text);
+          const textWidth = metrics.width;
+          const underlineY = element.fontSize / 2 + 3;
+
+          ctx.beginPath();
+          ctx.strokeStyle = element.color;
+          ctx.lineWidth = 2;
+          ctx.moveTo(-textWidth / 2, underlineY);
+          ctx.lineTo(textWidth / 2, underlineY);
+          ctx.stroke();
+        }
+
+        ctx.restore();
       }
-
-      ctx.restore();
     }
-  }
-};
+  };
 
-const draw = useCallback((e: any) => {
-  if (!drawingMode || !isDrawing || !canvasRef.current || !selectedTemplate) return;
-  
-  e.preventDefault();
-  
-  const clientX = e.clientX ?? e.touches?.[0]?.clientX;
-  const clientY = e.clientY ?? e.touches?.[0]?.clientY;
-  
-  const normalized = getNormalizedCoordinates(clientX, clientY);
-  if (normalized) {
-    setDrawingData(prev => [...prev, {
-      x: normalized.x,
-      y: normalized.y,
-      size: brushSize / 100,
-      color: brushColor
-    }]);
-    redrawMeme();
-  }
-}, [drawingMode, isDrawing, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor, redrawMeme]);
+  const draw = useCallback((e: any) => {
+    if (!drawingMode || !isDrawing || !canvasRef.current || !selectedTemplate) return;
+    
+    e.preventDefault();
+    
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+    
+    const normalized = getNormalizedCoordinates(clientX, clientY);
+    if (normalized) {
+      setDrawingData(prev => [...prev, {
+        x: normalized.x,
+        y: normalized.y,
+        size: brushSize / 100,
+        color: brushColor
+      }]);
+      redrawMeme();
+    }
+  }, [drawingMode, isDrawing, selectedTemplate, getNormalizedCoordinates, brushSize, brushColor, redrawMeme]);
 
   const stopDrawing = useCallback(() => {
     if (isDrawing) {
@@ -474,7 +504,7 @@ const draw = useCallback((e: any) => {
     setMemeElements(prev => [...prev, new TextBlock()]);
     setActiveBlockIndex(memeElements.length);
     await redrawMeme();
-  } ;
+  };
 
   const removeTextBlock = async () => {
     if (memeElements.length <= 1) return;
@@ -505,19 +535,66 @@ const draw = useCallback((e: any) => {
   };
 
   const handleFileSelected = async (e: any) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const file = e.target.files[0];
+  if (!file) return;
 
-    setIsLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (event: any) => {
+  setIsLoading(true);
+  const reader = new FileReader();
+  reader.onload = async (event: any) => {
+    try {
       saveToHistory();
-      setSelectedTemplate(event.target.result);
+      
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const canvasWidth = canvas.width;
+          const canvasHeight = canvas.height;
+          const imgRatio = img.width / img.height;
+          const canvasRatio = canvasWidth / canvasHeight;
+          
+          let displayWidth, displayHeight;
+          
+          switch (imageFitMode) {
+            case 'original':
+              // Оригинальный размер
+              displayWidth = canvasWidth;
+              displayHeight = canvasHeight;
+              break;
+            case 'contain':
+            default:
+              // Сохранить пропорции
+              if (imgRatio > canvasRatio) {
+                displayWidth = canvasWidth;
+                displayHeight = canvasWidth / imgRatio;
+              } else {
+                displayHeight = canvasHeight;
+                displayWidth = canvasHeight * imgRatio;
+              }
+              break;
+          }
+          
+          setImageInfo({
+            width: img.width,
+            height: img.height,
+            displayWidth,
+            displayHeight
+          });
+          
+          setSelectedTemplate(event.target.result);
+        }
+      };
+      img.src = event.target.result;
+      
       await redrawMeme();
+    } catch (error) {
+      console.error('Error loading image:', error);
+    } finally {
       setIsLoading(false);
-    };
-    reader.readAsDataURL(file);
+    }
   };
+  reader.readAsDataURL(file);
+};
 
   const updateTextProperty = async <K extends keyof TextBlock>(
     property: K,
@@ -591,7 +668,6 @@ const draw = useCallback((e: any) => {
   };
 
   // Функции фильтров
-
   const updateFilter = async <K extends keyof ImageFilters>(
     property: K,
     value: ImageFilters[K]
@@ -958,8 +1034,6 @@ const draw = useCallback((e: any) => {
     if (el?.elementType === 'Sticker') return '#f39c12';
     return '#95a5a6';
   };
-  
-
 
   return (
     <div className="meme-editor">
@@ -1020,6 +1094,13 @@ const draw = useCallback((e: any) => {
                 >
                   <GridIcon />
                 </button>
+                <button
+                  className={`tool-btn ${drawingMode ? 'active' : ''}`}
+                  onClick={toggleDrawingMode}
+                  title="Режим рисования"
+                >
+                  <DrawIcon />
+                </button>
                 <button className="tool-btn" onClick={undo} title="Отменить (Ctrl+Z)">
                   <UndoIcon />
                 </button>
@@ -1053,19 +1134,9 @@ const draw = useCallback((e: any) => {
 
             {showGrid && <GridOverlay />}
           </div>
-
-          {/* Быстрые действия под канвасом (для мобильных) */}
-          <div className="quick-actions">
-            <button className="quick-action-btn" onClick={addTextBlock}>
-              ➕ Текст
-            </button>
-            <button className="quick-action-btn" onClick={toggleDrawingMode}>
-              ✏️ Рисовать
-            </button>
-          </div>
         </div>
 
-        {/* Боковая панель (может скрываться на мобильных) */}
+        {/* Боковая панель - на десктопе справа, на мобильных снизу */}
         <div className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
           <div className="sidebar-header">
             <h2>Редактор мемов</h2>
@@ -1226,7 +1297,7 @@ const draw = useCallback((e: any) => {
                             </div>
                           </div>
                         )}
-                          {/* ГРАДИЕНТ - с вашими функциями */}
+                        {/* ГРАДИЕНТ - с вашими функциями */}
                         <div className="form-group">
                           <label className="checkbox">
                             <input 
@@ -1310,9 +1381,23 @@ const draw = useCallback((e: any) => {
                   <button className="btn-primary btn-block" onClick={uploadCustomImage}>
                     📤 Загрузить изображение
                   </button>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
+
+                  {/* Добавьте опции масштабирования */}
+                  <div className="form-group">
+                    <label>Режим отображения</label>
+                    <select
+                      className="form-control"
+                      value={imageFitMode}
+                      onChange={(e) => setImageFitMode(e.target.value)}
+                    >
+                      <option value="contain">Сохранить пропорции</option>
+                      <option value="original">Размер рабочей области</option>
+                    </select>
+                  </div>
+
+                  <input
+                    type="file"
+                    ref={fileInputRef}
                     onChange={handleFileSelected}
                     accept="image/jpeg,image/jpg,image/png"
                     style={{ display: 'none' }}
@@ -1514,16 +1599,23 @@ const draw = useCallback((e: any) => {
 
 // Иконки (используем простые SVG для кросс-платформенности)
 const ZoomInIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>;
-const ZoomOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>;
-const ResetZoomIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg>;
-const GridIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="3" x2="21" y2="3"/><line x1="3" y1="21" x2="21" y2="21"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/></svg>;
-const UndoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>;
-const RedoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>;
-const ArrowUpIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>;
-const ArrowDownIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>;
-const FrontIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16"/><rect x="8" y="8" width="12" height="12"/></svg>;
-const BackIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16"/><rect x="8" y="8" width="8" height="8"/></svg>;
-
+const ZoomOutIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /><line x1="8" y1="11" x2="14" y2="11" /></svg>;
+const ResetZoomIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 3v6h6" /></svg>;
+const GridIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="3" x2="21" y2="3" /><line x1="3" y1="21" x2="21" y2="21" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="12" y1="3" x2="12" y2="21" /></svg>;
+const UndoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 7v6h6" /><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" /></svg>;
+const RedoIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 7v6h-6" /><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" /></svg>;
+const ArrowUpIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></svg>;
+const ArrowDownIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></svg>;
+const FrontIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" /><rect x="8" y="8" width="12" height="12" /></svg>;
+const BackIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="4" y="4" width="16" height="16" /><rect x="8" y="8" width="8" height="8" /></svg>;
+const DrawIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 19l7-7 3 3-7 7-3-3z" />
+    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+    <path d="M2 2l7.586 7.586" />
+    <circle cx="11" cy="11" r="2" />
+  </svg>
+);
 // Компоненты
 const GridOverlay = () => (
   <div className="grid-overlay">
